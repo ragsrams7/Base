@@ -1,0 +1,429 @@
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Linq.Expressions;
+using System.Net;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Web;
+using System.Web.Mvc;
+using B.LApp.Common.Web.Providers;
+using Microsoft.Practices.ServiceLocation;
+using M.B.Common;
+using M.B.Common.Infrastructure.Contracts;
+using M.B.Common.User;
+
+namespace B.L.Common.Web.Controllers
+{
+    /// <summary>
+    /// The base controller class for B ASP.Net MVC application.
+    /// </summary>
+    public class ControllerBase : Controller
+    {
+        protected ActionResult SuccessAction { get; private set; }
+        protected ActionResult FailureAction { get; private set; }
+        protected IList<BApplicationMessage> RequestMessages { get; set; }
+
+        protected ILoggingService LoggingSvc { get { return ServiceLocator.Current.GetInstance<ILoggingService>(); } }
+        protected ICachingService Caching
+        {
+            get
+            {
+                return ServiceLocator.Current.GetInstance<ICachingService>();
+            }
+        }
+
+
+        /// <summary>
+        /// override method which is called before a specified action is executed.
+        /// </summary>
+        /// <param name="filterContext"></param>
+        protected override void OnActionExecuting(ActionExecutingContext filterContext)
+        {
+            // reinitialize the message queue for each incoming request.
+            RequestMessages = new List<BApplicationMessage>();
+            ViewBag.Title = string.Empty;
+            base.OnActionExecuting(filterContext);
+        }
+
+        /// <summary>
+        ///  This is used to get the exception details and adding it to header before the response is sent to client
+        /// </summary>
+        /// <param name="asyncResult"></param>
+        protected override void EndExecute(IAsyncResult asyncResult)
+        {
+            base.EndExecute(asyncResult);
+        }
+
+        protected override IAsyncResult BeginExecuteCore(AsyncCallback callback, object state)
+        {
+            if (UserContext.Current != null && UserContext.Current.UserCulture != null)
+            {
+                Thread.CurrentThread.CurrentCulture = Thread.CurrentThread.CurrentUICulture = UserContext.Current.UserCulture;    
+            }
+
+            return base.BeginExecuteCore(callback, state);
+        }
+
+        #region App Service Invocation functions
+        /// <summary>
+        /// Adaptor function for invoking the Application Service layer and populating the error messages
+        /// </summary>
+        /// <typeparam name="TAppService"></typeparam>
+        /// <typeparam name="TResult"></typeparam>
+        /// <param name="appServiceExpression"></param>
+        /// <returns></returns>
+        protected TResult InvokeDomainService<TAppService, TResult>(Expression<Func<TAppService, IList<BApplicationMessage>, TResult>> appServiceExpression)
+        {
+            TResult result = default(TResult);
+            IList<BApplicationMessage> messages = new List<BApplicationMessage>();
+
+            try
+            {
+                var appService = ServiceLocator.Current.GetInstance<TAppService>();
+                result = appServiceExpression.Compile().Invoke(appService, messages);
+
+            }
+            catch (BApplicationException ex)
+            {
+                messages.Add(ex);
+            }
+            catch (Exception ex)
+            {
+                messages.Add(new BApplicationMessage(BApplicationMessage.BMessageType.Error, "", ApplicationMessages.GenericErrorMessage));
+                LoggingSvc.Log(ex, category: Category.Web);
+            }
+            finally
+            {
+                PopulateModelErrors(messages);
+            }
+            return result;
+        }
+
+        protected TResult InvokeDomainServiceAsync<TAppService, TResult>(Expression<Func<TAppService, IList<BApplicationMessage>, TResult>> appServiceExpression, TaskScheduler taskScheduler = null) {
+            TResult result = default(TResult);
+            IList<BApplicationMessage> messages = new List<BApplicationMessage>();
+            //should be written to return the result from task if we want to leverage the TPL
+            try {
+                var appService = ServiceLocator.Current.GetInstance<TAppService>();
+                return Task.Factory.StartNew(() => appServiceExpression.Compile().Invoke(appService, messages), CancellationToken.None,
+                   TaskCreationOptions.None,
+                   taskScheduler ?? TaskScheduler.FromCurrentSynchronizationContext()).Result;
+            }
+            catch (BApplicationException ex) {
+                messages.Add(ex);
+            }
+            catch (Exception ex) {
+                messages.Add(new BApplicationMessage(BApplicationMessage.BMessageType.Error, "", ApplicationMessages.GenericErrorMessage));
+                LoggingSvc.Log(ex, category: Category.Web);
+            }
+            finally {
+                PopulateModelErrors(messages);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Adaptor function with 2 app service type definition parameters 
+        ///  for invoking the Application Service layer and populating the error messages
+        /// </summary>
+        /// <typeparam name="TAppService1"></typeparam>
+        /// <typeparam name="TAppService2"></typeparam>
+        /// <typeparam name="TResult"></typeparam>
+        /// <param name="appServiceExpression"></param>
+        /// <returns></returns>
+        protected TResult InvokeDomainService<TAppService1, TAppService2, TResult>(Expression<Func<TAppService1, TAppService2, IList<BApplicationMessage>, TResult>> appServiceExpression)
+        {
+            TResult result = default(TResult);
+            IList<BApplicationMessage> messages = new List<BApplicationMessage>();
+
+            try
+            {
+                var appService1 = ServiceLocator.Current.GetInstance<TAppService1>();
+                var appService2 = ServiceLocator.Current.GetInstance<TAppService2>();
+                result = appServiceExpression.Compile().Invoke(appService1, appService2, messages);
+            }
+            catch (BApplicationException ex)
+            {
+                messages.Add(ex);
+            }
+            catch (Exception ex)
+            {
+                messages.Add(new BApplicationMessage(BApplicationMessage.BMessageType.Error, "", ApplicationMessages.GenericErrorMessage));
+                LoggingSvc.Log(ex, category: Category.Web);
+            }
+            finally
+            {
+                PopulateModelErrors(messages);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Adaptor function with 3 app service type definition parameters
+        ///  for invoking the Application Service layer and populating the error messages
+        /// </summary>
+        /// <typeparam name="TAppService1"></typeparam>
+        /// <typeparam name="TAppService2"></typeparam>
+        /// <typeparam name="TAppService3"></typeparam>
+        /// <typeparam name="TResult"></typeparam>
+        /// <param name="appServiceExpression"></param>
+        /// <returns></returns>
+        protected TResult InvokeDomainService<TAppService1, TAppService2, TAppService3, TResult>(Expression<Func<TAppService1, TAppService2, TAppService3, IList<BtmuApplicationMessage>, TResult>> appServiceExpression)
+        {
+            TResult result = default(TResult);
+            IList<BApplicationMessage> messages = new List<BApplicationMessage>();
+
+            try
+            {
+                var appService1 = ServiceLocator.Current.GetInstance<TAppService1>();
+                var appService2 = ServiceLocator.Current.GetInstance<TAppService2>();
+                var appService3 = ServiceLocator.Current.GetInstance<TAppService3>();
+                result = appServiceExpression.Compile().Invoke(appService1, appService2, appService3, messages);
+            }
+            catch BApplicationException ex)
+            {
+                messages.Add(ex);
+            }
+            catch (Exception ex)
+            {
+                messages.Add(new BApplicationMessage(BApplicationMessage.BMessageType.Error, "", ApplicationMessages.GenericErrorMessage));
+                LoggingSvc.Log(ex, category: Category.Web);
+            }
+            finally
+            {
+                PopulateModelErrors(messages);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Adaptor function (action with no return value) for invoking the Application Service layer and populating the error messages
+        /// </summary>
+        /// <typeparam name="TAppService"></typeparam>
+        /// <typeparam name="TResult"></typeparam>
+        /// <param name="appServiceExpression"></param>
+        protected void InvokeDomainService<TAppService, TResult>(Expression<Action<TAppService, IList<BApplicationMessage>>> appServiceExpression)
+        {
+            IList<BApplicationMessage> messages = new List<BApplicationMessage>();
+
+            try
+            {
+                var appService = ServiceLocator.Current.GetInstance<TAppService>();
+                appServiceExpression.Compile().Invoke(appService, messages);
+            }
+            catch (BApplicationException ex)
+            {
+                messages.Add(ex);
+            }
+            catch (Exception ex)
+            {
+                messages.Add(new BApplicationMessage(BApplicationMessage.BMessageType.Error, "", ApplicationMessages.GenericErrorMessage));
+                LoggingSvc.Log(ex, category: Category.Web);
+            }
+            finally
+            {
+                PopulateModelErrors(messages);
+            }
+        }
+
+        /// <summary>
+        /// Adaptor function (action with no return value) with 2 app service type parameter
+        ///  for invoking the Application Service layer and populating the error messages
+        /// </summary>
+        /// <typeparam name="TAppService1"></typeparam>
+        /// <typeparam name="TAppService2"></typeparam>
+        /// <typeparam name="TResult"></typeparam>
+        /// <param name="appServiceExpression"></param>
+        protected void InvokeDomainService<TAppService1, TAppService2, TResult>(Expression<Action<TAppService1, TAppService2, IList<BApplicationMessage>>> appServiceExpression)
+        {
+            IList<BApplicationMessage> messages = new List<BApplicationMessage>();
+
+            try
+            {
+                var appService1 = ServiceLocator.Current.GetInstance<TAppService1>();
+                var appService2 = ServiceLocator.Current.GetInstance<TAppService2>();
+                appServiceExpression.Compile().Invoke(appService1, appService2, messages);
+            }
+            catch (BApplicationException ex)
+            {
+                messages.Add(ex);
+            }
+            catch (Exception ex)
+            {
+                messages.Add(new BApplicationMessage(BApplicationMessage.BMessageType.Error, "", ApplicationMessages.GenericErrorMessage));
+                LoggingSvc.Log(ex, category: Category.Web);
+            }
+            finally
+            {
+                PopulateModelErrors(messages);
+            }
+
+        }
+
+        /// <summary>
+        /// Adaptor function (action with no return value) with 3 app service type parameter
+        ///  for invoking the Application Service layer and populating the error messages
+        /// </summary>
+        /// <typeparam name="TAppService1"></typeparam>
+        /// <typeparam name="TAppService2"></typeparam>
+        /// <typeparam name="TAppService3"></typeparam>
+        /// <param name="appServiceExpression"></param>
+        protected void InvokeDomainService<TAppService1, TAppService2, TAppService3>(Expression<Action<TAppService1, TAppService2, TAppService3, IList<BtmuApplicationMessage>>> appServiceExpression)
+        {
+            IList<BuApplicationMessage> messages = new List<BApplicationMessage>();
+
+            try
+            {
+                var appService1 = ServiceLocator.Current.GetInstance<TAppService1>();
+                var appService2 = ServiceLocator.Current.GetInstance<TAppService2>();
+                var appService3 = ServiceLocator.Current.GetInstance<TAppService3>();
+                appServiceExpression.Compile().Invoke(appService1, appService2, appService3, messages);
+            }
+            catch (BApplicationException ex)
+            {
+                messages.Add(ex);
+            }
+            catch (Exception ex)
+            {
+                messages.Add(new BApplicationMessage(BApplicationMessage.BMessageType.Error, "", ApplicationMessages.GenericErrorMessage));
+                LoggingSvc.Log(ex, category: Category.Web);
+            }
+            finally
+            {
+                PopulateModelErrors(messages);
+            }
+
+        }
+        #endregion
+
+        /// <summary>
+        /// Renders a Patial View with the model and return as a string for AJAX call
+        /// </summary> 
+        /// <param name="viewName"></param>
+        /// <param name="model"></param>
+        /// <returns></returns>
+        public string RenderPartialView(string viewName, object model)
+        {
+            if (string.IsNullOrWhiteSpace(viewName))
+                return null;
+
+            this.ViewData.Model = model;
+
+            using (var sw = new System.IO.StringWriter())
+            {
+                ViewEngineResult viewResult = ViewEngines.Engines.FindPartialView(this.ControllerContext, viewName);
+                var viewContext = new ViewContext(this.ControllerContext, viewResult.View, this.ViewData, this.TempData, sw);
+                viewResult.View.Render(viewContext, sw);
+
+                return sw.GetStringBuilder().ToString();
+            }
+        }
+        /// <summary>
+        /// Populate the Model state with the errors.
+        /// </summary>
+        /// <param name="messages"></param>
+        protected void PopulateModelErrors(IList<BApplicationMessage> messages)
+        {
+            foreach (var msg in messages.Where(msg => msg.MessageType == BApplicationMessage.BMessageType.Error))
+            {
+                this.ModelState.AddModelError(msg.MemberName, msg.Message);
+                RequestMessages.Add(msg);
+            }           
+        }
+
+        #region Controller Action Result determination functions
+
+        protected void SetSuccessAction(ActionResult successAction)
+        {
+            SuccessAction = successAction;
+        }
+
+        protected void SetSuccessAction(Expression<Func<ActionResult>> successActionExpression)
+        {
+            if (successActionExpression != null)
+                SuccessAction = successActionExpression.Compile().Invoke();
+        }
+
+        protected void SetFailureAction(ActionResult failureAction)
+        {
+            FailureAction = failureAction;
+        }
+
+        protected void SetFailureAction(Expression<Func<ActionResult>> failureActionExpression)
+        {
+            if (failureActionExpression != null)
+                FailureAction = failureActionExpression.Compile().Invoke();
+        }
+
+        protected ActionResult GetFinalAction()
+        {
+            if (ModelState.IsValid)
+            {
+                return SuccessAction;
+            }
+            else
+            {
+                return FailureAction;
+            }
+        }
+
+        protected ActionResult GetFinalAction(Expression<Func<ActionResult>> successActionExpression, Expression<Func<ActionResult>> failureActionExpression)
+        {
+            if (successActionExpression != null)
+                SuccessAction = successActionExpression.Compile().Invoke();
+            if (failureActionExpression != null)
+                FailureAction = failureActionExpression.Compile().Invoke();
+
+            if (ModelState.IsValid)
+            {
+                return SuccessAction;
+            }
+            else
+            {
+                return FailureAction;
+            }
+        }
+        #endregion
+
+        public virtual SecurityValidationResult ValidateWebRequest(AuthorizationContext authorizationContext)
+        {
+            return new SecurityValidationResult();
+        }
+    }
+
+    public static class ControllerContextExtensions
+    {
+        public static ViewResult GetErrorResult<TContext>(this TContext context, Exception exception = null, int statusCode = 0, string message = @"")
+            where TContext : ControllerContext
+        {
+            var controllerName = (string)context.RouteData.Values["controller"];
+            var actionName = (string)context.RouteData.Values["action"];          
+            var model = new HandleErrorInfo(exception, controllerName, actionName);
+
+            var result = new ViewResult
+            {
+                ViewName = @"~/Views/Shared/Error.cshtml",
+                ViewData = new ViewDataDictionary<HandleErrorInfo>(model),
+            };
+            if (context.HttpContext.Request.QueryString["_target"] != null)
+            {
+                result.ViewBag.Target = context.HttpContext.Request.QueryString["_target"].ToLower();
+            }
+            else
+            {
+                result.ViewBag.Target = "page";
+            }
+            result.ViewBag.StatusCode = statusCode;
+            result.ViewBag.Message = HttpContext.Current.Server.HtmlEncode(message);
+            // Prepare the response. 
+            context.HttpContext.Response.Clear();
+            //context.HttpContext.Response.StatusCode = statusCode;
+            context.HttpContext.Response.TrySkipIisCustomErrors = true;
+            return result;
+        }
+    }
+}
