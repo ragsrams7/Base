@@ -1,9 +1,5 @@
 /*
-Bank of Tokyo-Mitusbishi UFJ - Common Web - ApiControllerBase
 
-History
- * 
- * 09/21/2012 created by Naing
  *  Base controlller for Web API endpoints.
  * 
 */
@@ -18,7 +14,7 @@ using Microsoft.Practices.ServiceLocation;
 using M.B.Common;
 using M.B.Common.Infrastructure.Contracts;
 
-namespace Btmu.LoansApp.Common.Web.Controllers
+namespace B.L.Common.Web.Controllers
 {
     public class ApiControllerBase : ApiController
     {
@@ -39,17 +35,17 @@ namespace Btmu.LoansApp.Common.Web.Controllers
         /// <typeparam name="TResult"></typeparam>
         /// <param name="appServiceExpression"></param>
         /// <returns></returns>
-        protected TResult InvokeDomainService<TAppService, TResult>(Expression<Func<TAppService, IList<BtmuApplicationMessage>, TResult>> appServiceExpression)
+        protected TResult InvokeDomainService<TAppService, TResult>(Expression<Func<TAppService, IList<BApplicationMessage>, TResult>> appServiceExpression)
         {
             TResult result = default(TResult);
-            IList<BtmuApplicationMessage> messages = new List<BtmuApplicationMessage>();
+            IList<BApplicationMessage> messages = new List<BApplicationMessage>();
             
             try
             {
                 var appService = ServiceLocator.Current.GetInstance<TAppService>();
                 result = appServiceExpression.Compile().Invoke(appService, messages);
             }
-            catch (BtmuApplicationException ex)
+            catch (BApplicationException ex)
             {
                 messages.Add(ex);
             }
@@ -81,10 +77,10 @@ namespace Btmu.LoansApp.Common.Web.Controllers
         /// <typeparam name="TResult"></typeparam>
         /// <param name="appServiceExpression"></param>
         /// <returns></returns>
-        protected TResult InvokeDomainService<TAppService1, TAppService2, TResult>(Expression<Func<TAppService1, TAppService2, IList<BtmuApplicationMessage>, TResult>> appServiceExpression)
+        protected TResult InvokeDomainService<TAppService1, TAppService2, TResult>(Expression<Func<TAppService1, TAppService2, IList<BApplicationMessage>, TResult>> appServiceExpression)
         {
             TResult result = default(TResult);
-            IList<BtmuApplicationMessage> messages = new List<BtmuApplicationMessage>();
+            IList<BApplicationMessage> messages = new List<BApplicationMessage>();
             
             try
             {
@@ -92,7 +88,7 @@ namespace Btmu.LoansApp.Common.Web.Controllers
                 var appService2 = ServiceLocator.Current.GetInstance<TAppService2>();
                 result = appServiceExpression.Compile().Invoke(appService1, appService2, messages);
             }
-            catch (BtmuApplicationException ex)
+            catch (BApplicationException ex)
             {
                 messages.Add(ex);
             }
@@ -129,7 +125,7 @@ namespace Btmu.LoansApp.Common.Web.Controllers
         protected TResult InvokeDomainService<TAppService1, TAppService2, TAppService3, TResult>(Expression<Func<TAppService1, TAppService2, TAppService3, IList<BtmuApplicationMessage>, TResult>> appServiceExpression)
         {
             TResult result = default(TResult);
-            IList<BtmuApplicationMessage> messages = new List<BtmuApplicationMessage>();
+            IList<BApplicationMessage> messages = new List<BApplicationMessage>();
             
             try
             {
@@ -138,7 +134,7 @@ namespace Btmu.LoansApp.Common.Web.Controllers
                 var appService3 = ServiceLocator.Current.GetInstance<TAppService3>();
                 result = appServiceExpression.Compile().Invoke(appService1, appService2, appService3, messages);
             }
-            catch (BtmuApplicationException ex)
+            catch (BApplicationException ex)
             {
                 messages.Add(ex);
             }
@@ -169,16 +165,16 @@ namespace Btmu.LoansApp.Common.Web.Controllers
         /// <typeparam name="TAppService"></typeparam>
         /// <typeparam name="TResult"></typeparam>
         /// <param name="appServiceExpression"></param>
-        protected void InvokeDomainService<TAppService, TResult>(Expression<Action<TAppService, IList<BtmuApplicationMessage>>> appServiceExpression)
+        protected void InvokeDomainService<TAppService, TResult>(Expression<Action<TAppService, IList<BApplicationMessage>>> appServiceExpression)
         {
-            IList<BtmuApplicationMessage> messages = new List<BtmuApplicationMessage>();
+            IList<BApplicationMessage> messages = new List<BApplicationMessage>();
             
             try
             {
                 var appService = ServiceLocator.Current.GetInstance<TAppService>();
                 appServiceExpression.Compile().Invoke(appService, messages);
             }
-            catch (BtmuApplicationException ex)
+            catch (BApplicationException ex)
             {
                 messages.Add(ex);
             }
@@ -209,9 +205,9 @@ namespace Btmu.LoansApp.Common.Web.Controllers
         /// <typeparam name="TAppService2"></typeparam>
         /// <typeparam name="TResult"></typeparam>
         /// <param name="appServiceExpression"></param>
-        protected void InvokeDomainService<TAppService1, TAppService2, TResult>(Expression<Action<TAppService1, TAppService2, IList<BtmuApplicationMessage>>> appServiceExpression)
+        protected void InvokeDomainService<TAppService1, TAppService2, TResult>(Expression<Action<TAppService1, TAppService2, IList<BApplicationMessage>>> appServiceExpression)
         {
-            IList<BtmuApplicationMessage> messages = new List<BtmuApplicationMessage>();
+            IList<BApplicationMessage> messages = new List<BApplicationMessage>();
             
             try
             {
@@ -219,7 +215,7 @@ namespace Btmu.LoansApp.Common.Web.Controllers
                 var appService2 = ServiceLocator.Current.GetInstance<TAppService2>();
                 appServiceExpression.Compile().Invoke(appService1, appService2, messages);
             }
-            catch (BtmuApplicationException ex)
+            catch (BApplicationException ex)
             {
                 messages.Add(ex);
             }
@@ -252,7 +248,7 @@ namespace Btmu.LoansApp.Common.Web.Controllers
         /// <param name="appServiceExpression"></param>
         protected void InvokeDomainService<TAppService1, TAppService2, TAppService3>(Expression<Action<TAppService1, TAppService2, TAppService3, IList<BtmuApplicationMessage>>> appServiceExpression)
         {
-            IList<BtmuApplicationMessage> messages = new List<BtmuApplicationMessage>();
+            IList<BApplicationMessage> messages = new List<BApplicationMessage>();
             
             try
             {
@@ -261,7 +257,7 @@ namespace Btmu.LoansApp.Common.Web.Controllers
                 var appService3 = ServiceLocator.Current.GetInstance<TAppService3>();
                 appServiceExpression.Compile().Invoke(appService1, appService2, appService3, messages);
             }
-            catch (BtmuApplicationException ex)
+            catch (BApplicationException ex)
             {
                 messages.Add(ex);
             }
