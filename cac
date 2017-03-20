@@ -1,0 +1,317 @@
+ public interface ICacheDBService
+    {
+
+        bool PutToDatabase(string cacheKey, string xmlValue, DateTime expirationDate);
+
+        void RemoveFromDatabase(string cacheKey);
+
+        string GetFromDatabase(string cacheKey);
+    }
+    
+    
+
+
+namespace Btmu.LoansApp.Common.Infrastructure
+{
+    public static class CachingServiceExtension
+    {
+       
+        public enum SerializerType
+        {
+            XMLSerializer,
+            DataContractSerializer
+        }
+
+        public static IEnumerable<T> GetList<T>(this ICachingService cachingService, string key, bool slideTimeout, Expression<Func<IEnumerable<T>>> readThroughExpression = null, bool isUserSpecific = false) where T : class
+        {
+            string userId = UserContext.Current.BtmuUserId;
+
+            var userKey = isUserSpecific ? string.Format("{0}_{1}", userId, key) : key;
+            return cachingService.GetList<T>(userKey, slideTimeout, readThroughExpression);
+        }
+
+        public static void Put<T>(this ICachingService cachingService, string key, T value, TimeSpan? timeout = null, bool isUserSpecific = false)
+        {
+            if (ConfigurationManager.AppSettings["UseCache"] == "false")
+                return;
+
+            string userId = UserContext.Current.BtmuUserId;
+
+            var userKey = isUserSpecific ? string.Format("{0}_{1}", userId, key) : key;
+            
+            cachingService.Put(userKey, value, timeout);
+            if (!cachingService.IsCacheAvailable())
+            {
+                PutToDatabase(key, value, timeout);
+        }
+        }
+
+        public static void Put<T>(this ICachingService cachingService, string key, T value, TimeSpan? timeout = null, bool isUserSpecific = false, bool isSync = false)
+        {
+            if (ConfigurationManager.AppSettings["UseCache"] == "false")
+                return;
+
+            string userId = UserContext.Current.BtmuUserId;
+
+            var userKey = isUserSpecific ? string.Format("{0}_{1}", userId, key) : key;
+            cachingService.Put(userKey, value, timeout, isSync);
+            if (!cachingService.IsCacheAvailable())
+            {
+                PutToDatabase(userKey, value, timeout, SerializerType.XMLSerializer, true);
+        }
+        }
+        
+        public static void Put<T>(this ICachingService cachingService, string key, T value, SerializerType serializerType, TimeSpan? timeout = null, bool isUserSpecific = false, bool isSync = false)
+            where T : class, new()
+        {
+            if (ConfigurationManager.AppSettings["UseCache"] == "false")
+                return;
+
+            if (value == null)
+                return;
+            var xmlValue = SerializeObjectToXml(value, serializerType);
+
+            if (isUserSpecific)
+            {
+                string userId = UserContext.Current.BtmuUserId;
+                key = string.Format("{0}_{1}", userId, key);
+            }
+
+            if (timeout != null && timeout.HasValue)
+            {
+                cachingService.Put(key, xmlValue, timeout.Value, isSync);
+                if (!cachingService.IsCacheAvailable())
+                {
+                    PutToDatabase(key, value, timeout, serializerType);
+            }
+            }
+            else
+            {
+                cachingService.Put(key, xmlValue, null, isSync);
+                if (!cachingService.IsCacheAvailable())
+                {
+                    PutToDatabase(key, value, timeout, serializerType);
+            }
+        }
+        }
+
+        public static T Get<T>(this ICachingService cachingService, string key, bool slideTimeout, Expression<Func<T>> readThroughExpression = null, bool isUserSpecific = false)
+            where T : class, new()
+        {
+            if (ConfigurationManager.AppSettings["UseCache"] == "false")
+                return null;
+
+            string userId = UserContext.Current.BtmuUserId;
+
+            var userKey = isUserSpecific ? string.Format("{0}_{1}", userId, key) : key;
+            //Expression<Func<T>> databaseFallBack = ()=>GetFromDatabase<T>(userKey, SerializerType.XMLSerializer);
+            //return cachingService.Get(userKey, slideTimeout, readThroughExpression ?? databaseFallBack);
+            if(cachingService.IsCacheAvailable())
+            return cachingService.Get(userKey, slideTimeout, readThroughExpression);
+            else
+            {
+                return GetFromDatabase<T>(userKey, SerializerType.XMLSerializer);
+        }
+        }
+
+        public static T Get<T>(this ICachingService cachingService, string key, SerializerType serializerType, TimeSpan? newTimeout = null, bool isUserSpecific = false)
+            where T : class, new()
+        {
+            if (ConfigurationManager.AppSettings["UseCache"] == "false")
+                return null;
+            T obj = null;
+
+            if (isUserSpecific)
+            {
+                string userId = UserContext.Current.BtmuUserId;
+
+                key = string.Format("{0}_{1}", userId, key);
+            }
+           // Expression<Func<object>> databaseFallBack = () => GetFromDatabase<object>(key, SerializerType.XMLSerializer);
+           // var value = cachingService.Get<Object>(key: key, newTimeout: newTimeout,readThroughExpression: databaseFallBack);
+           Object value;
+            if(cachingService.IsCacheAvailable())
+                value = cachingService.Get<Object>(key: key, newTimeout: newTimeout);
+            else
+            {
+                value = GetFromDatabaseAsString<object>(key, SerializerType.XMLSerializer);
+            }
+
+            try
+            {
+                if (value != null && (string)value != "")
+                {
+                switch (serializerType)
+                {
+                    case SerializerType.XMLSerializer:
+                        obj = SerializationUtil.DeserializeXml<T>(value.ToString());
+                        break;
+                    case SerializerType.DataContractSerializer:
+                        obj = SerializationUtil.DeserializeEntityByNetDataContract<T>(value.ToString());
+                        break;
+                }
+            }
+            }
+            catch (Exception ex)
+            {
+                var logSvc = ServiceLocator.Current.GetInstance<ILoggingService>();
+                logSvc.Log("Error deserializing:" + key, category: Category.General);
+                logSvc.Log(ex, category: Category.General);
+            }
+            return obj;
+        }
+
+        public static void Remove(this ICachingService cachingService, string key, bool isUserSpecific = false)
+        {
+            if (ConfigurationManager.AppSettings["UseCache"] == "false")
+                return;
+
+            string userId = UserContext.Current.BtmuUserId;
+
+            var userKey = isUserSpecific ? string.Format("{0}_{1}", userId, key) : key;
+            if (cachingService.IsCacheAvailable())
+            {
+            cachingService.Remove(userKey);
+            }
+            else
+            {
+                RemoveFromDatabase(userKey);    
+        }
+
+        }
+
+        private static void PutToDatabase<T>(string cacheKey, T value, TimeSpan? timeout,
+            SerializerType serializerType = SerializerType.XMLSerializer, bool isSync = true)
+        {
+            try
+            {
+                double timeOutToAdd = timeout.HasValue ? timeout.Value.Seconds : 10; //testing to be removed
+                var expirationDate = DateTime.Now.AddSeconds(timeOutToAdd);
+                cacheKey = GetEnvironmentCacheKey(cacheKey);
+                if (isSync)
+                {
+                    PutObjectToDatabaseCache<T>(cacheKey, value, expirationDate, serializerType);
+                }
+                else
+                {
+                    CommonHelper.InvokeAsyncCall(
+                        () => PutObjectToDatabaseCache<T>(cacheKey, value, expirationDate, serializerType));
+                }
+            }
+            catch (Exception ex)
+            {
+                var logSvc = ServiceLocator.Current.GetInstance<ILoggingService>();
+                logSvc.Log("Error in PutToDatabase:", category: Category.General);
+                logSvc.Log(ex, category: Category.General);
+            }
+        }
+
+        private static string GetEnvironmentCacheKey(string key)
+        {
+            string CacheEnvironment = ConfigurationManager.AppSettings["CacheEnvironment"];
+            return CacheEnvironment != null ? string.Format("{0}_{1}", key, CacheEnvironment) : key;
+        }
+        //private static T GetFromDatabase<T>(string cacheKey, SerializerType serializerType) where T : class, new()
+                //{
+                //    T obj = null;
+                //    Cache cacheEnty = null;
+                //    using (var loanUow = new LoansUOW())
+                //    {
+                //        var cacheRepo = loanUow.GenericRepositoryFor<Cache>();
+                //        if (cacheRepo != null)
+                //        {
+                //            var allEntries = cacheRepo.GetAll();
+                //            if (allEntries != null)
+                //            {
+                //                cacheEnty = allEntries.ToList().LastOrDefault(c => c.CacheKey == cacheKey && c.Expiration > DateTime.Now);
+                //            }
+                //        }
+                //    }
+                //    if (cacheEnty != null)
+                //    {
+                //        obj = DeserializeXmlToObject<T>(cacheEnty.Value, serializerType);
+                //    }
+                //    return obj;
+                //}
+
+            private static T GetFromDatabase<T>(string cacheKey, SerializerType serializerType) where T : class, new()
+        {
+            T obj = null;
+            cacheKey = GetEnvironmentCacheKey(cacheKey);
+            var refService = ServiceLocator.Current.GetInstance<ICacheDBService>();
+            string cacheString = refService.GetFromDatabase(cacheKey);
+                if (cacheString != null && cacheString != "")
+            {
+                    return (T) Convert.ChangeType(cacheString, typeof (T));
+            }
+
+
+                //if(cacheString != null && cacheString != "")
+            //{
+            //    obj = DeserializeXmlToObject<T>(cacheString, serializerType);
+            //}
+            return obj;
+        }
+
+            private static string GetFromDatabaseAsString<T>(string cacheKey, SerializerType serializerType) where T : class, new()
+            {
+                //T obj = null;
+                cacheKey = GetEnvironmentCacheKey(cacheKey);
+                var refService = ServiceLocator.Current.GetInstance<ICacheDBService>();
+                return  refService.GetFromDatabase(cacheKey);
+                
+            }
+
+        private static void PutObjectToDatabaseCache<T>(string cacheKey, T value, DateTime expirationDate, SerializerType serializerType)
+        {
+            var xmlValue = SerializeObjectToXml(value, serializerType);
+            var refService = ServiceLocator.Current.GetInstance<ICacheDBService>();
+            bool cacheStatus = refService.PutToDatabase(cacheKey, xmlValue,expirationDate);
+        }
+
+        private static void RemoveFromDatabase(string cacheKey)
+        {
+            var refService = ServiceLocator.Current.GetInstance<ICacheDBService>();
+            refService.RemoveFromDatabase(cacheKey);
+        }
+        
+        private static string SerializeObjectToXml<T>(T value, SerializerType serializerType)
+        {
+            var xmlValue = string.Empty;
+
+            switch (serializerType)
+            {
+                case SerializerType.XMLSerializer:
+                    xmlValue = SerializationUtil.SerializeToXml(value);
+                    break;
+                case SerializerType.DataContractSerializer:
+                    xmlValue = SerializationUtil.SerializeEntityByNetDataContract<T>(value);
+                    break;
+                default:
+                    xmlValue = SerializationUtil.SerializeToXml(value);
+                    break;
+            }
+            return xmlValue;
+        }
+
+        private static T DeserializeXmlToObject<T>(string xmlValue, SerializerType serializerType)
+            where T : class, new()
+        {
+            T obj = null;
+            if (!string.IsNullOrEmpty(xmlValue))
+            {
+                switch (serializerType)
+                {
+                    case SerializerType.XMLSerializer:
+                        obj = SerializationUtil.DeserializeXml<T>(xmlValue);
+                        break;
+                    case SerializerType.DataContractSerializer:
+                        obj =
+                            SerializationUtil.DeserializeEntityByNetDataContract<T>(xmlValue);
+                        break;
+                }
+            }
+            return obj;
+        }        
+    }
+}
