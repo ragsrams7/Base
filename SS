@@ -1,0 +1,15 @@
+ public interface ISecurityService
+    {
+        //IList<ControllerSecurityValidationContext> ControllerValidations { get; set; }
+        bool Authenticate(HttpContextBase httpContext);
+        
+        bool Authorize(string userID, IEnumerable<PermissionsEnum> permissionList = null);
+        bool Authorize(string userID, AuthorizationContext context = null);
+
+        SecurityValidationResult ValidateWebRequest(AuthorizationContext authorizationContext, Func<AuthorizationContext, SecurityValidationResult> validationFunc);
+        /*
+        void ValidateFor<TController>(Func<AuthorizationContext, bool> validationFunc, string actionName = null)
+            where TController : ExtController;
+        bool RunControllerValidations(AuthorizationContext authorizationcontext);
+         */
+    }
