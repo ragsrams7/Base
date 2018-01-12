@@ -1,0 +1,429 @@
+
+/*
+Bank of Tokyo-Mitusbishi UFJ - Common - LoggingService
+History
+ * 
+ * 08/30/2012 modified by Naing
+ *  Finished the functionalities of the Logging Service
+ *  
+ * 09/14/2012 modified by Naing
+ *  Exception object is dumped in the extended property instead of in the message as message's length is limited.
+ *  
+ * 10/25/2012 modified by Naing
+ *  Switched userId to be derived from UserContext.Current
+ * 
+ * 03/20/2013 modified by Naing
+ *  Optimizing the log writing process so that if the filters are set and the entry is not supposed to be written, then don't even go further.
+ *  
+*/
+
+using Microsoft.Practices.EnterpriseLibrary.Common.Configuration;
+using Microsoft.Practices.EnterpriseLibrary.Data;
+using Microsoft.Practices.EnterpriseLibrary.ExceptionHandling;
+using Microsoft.Practices.EnterpriseLibrary.Logging;
+using Microsoft.Practices.ServiceLocation;
+
+using System;
+using System.Collections.Generic;
+using System.Collections.Specialized;
+using System.Diagnostics;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Web;
+
+namespace 
+{
+    public class LoggingService : ILoggingService
+    {
+        const string WID = "wId";
+        const string CNUMBER = "CIFNumber";
+        const string FLTRANSACTIONNUMBER = "FTransactionNumber";
+        const string NLTRANSACTIONNUMBER = "NLTransactionNumber";
+        static LoggingService()
+        {
+            IConfigurationSource configurationSource = ConfigurationSourceFactory.Create();
+            DatabaseFactory.SetDatabaseProviderFactory(new DatabaseProviderFactory(configurationSource));
+            LogWriterFactory logWriterFactory = new LogWriterFactory(configurationSource);
+            Logger.SetLogWriter(logWriterFactory.Create());
+        }
+
+        public void Log(string message, Category category = Category.General, TraceEventType severity = TraceEventType.Information, Priority priority = Priority.Normal, string title = "", [CallerMemberNameAttribute]
+                           string callerName = "", [CallerFilePath]
+                           string callerSource = "", [CallerLineNumber]
+                           int callerLineNumber = 0)
+        {
+            Log<Object>(message, null, category, severity, priority, title, null, callerName, callerSource, callerLineNumber);
+        }
+
+        public void Log<TPayload>(string message, TPayload payload, Category category = Category.General, TraceEventType severity = TraceEventType.Information, Priority priority = Priority.Normal, string title = "", [CallerMemberNameAttribute]
+                                  string callerName = "", [CallerFilePath]
+                                  string callerSource = "", [CallerLineNumber]
+                                  int callerLineNumber = 0)
+        {
+            Log<Object>(message, payload, category, severity, priority, title, null, callerName, callerSource, callerLineNumber);
+        }
+
+
+        public void LogServiceRequestResponse<TPayload>(string message, TPayload payload, Category category = Category.General, TraceEventType severity = TraceEventType.Information, Priority priority = Priority.Normal, string title = "", [CallerMemberNameAttribute]
+                                  string callerName = "", [CallerFilePath]
+                                  string callerSource = "", [CallerLineNumber]
+                                  int callerLineNumber = 0)
+
+        {
+            LogServiceRequestResponse<TPayload>(message, payload, category, severity, priority, title, null, callerName, callerSource, callerLineNumber);
+        }
+
+
+
+        private void Log<TPayload>(string message, TPayload payload, Category category = Category.General, TraceEventType severity = TraceEventType.Information, Priority priority = Priority.Normal, string title = "", IDictionary<string, object> extendedProperties = null, [CallerMemberNameAttribute]
+                                  string callerName = "", [CallerFilePath]
+                                  string callerSource = "", [CallerLineNumber]
+                                  int callerLineNumber = 0)
+        {
+            try
+            {
+                var fileStart = callerSource.LastIndexOf(@"NLsApp\");
+                if (fileStart > 0)
+                    callerSource = callerSource.Substring(fileStart);
+                title = string.Format(@"logged {0} from {1} => {2} at line {3}", title, callerSource, callerName, callerLineNumber);
+                if (severity == TraceEventType.Error)
+                {
+                    AddExceptionToCache(title, message);
+                }
+
+                var logEntry = new LogEntry()
+                {
+                    Severity = severity,
+                    Priority = (int)priority,
+                    Categories = new string[] { category.ToString() },
+                };
+                // optimizing the log writing process so that if the filters are set and the entry is not supposed to be written, then don't even go further.
+                if (Logger.ShouldLog(logEntry))
+                {
+                    var loggedInUser = GetLoggedInUserId();
+                    var extendedPropertiesXML = GetExtendedProperties(loggedInUser);
+
+                    Task.Factory.StartNew(() =>
+                    {
+                        title = title.Substring(0, Math.Min(title.Length, 150));
+                        message = message.Substring(0, Math.Min(message.Length, 1500));
+
+                        if (extendedProperties == null)
+                            extendedProperties = new Dictionary<string, object>();
+
+                        try
+                        {
+                            //we should look at the possibility of having value types for the payload
+                            var isNullableType = Equals(null, default(TPayload)); // ref type or nullable value type
+                            if ((isNullableType && !Equals(payload, default(TPayload))) || !isNullableType)
+                                extendedProperties.Add(@"Payload", SerializationUtil.SerializeEntityByNetDataContract(payload));
+                        }
+                        finally
+                        {
+                            //if there is a problem in serializing the payload, then just proceed with the message
+                        }
+                        logEntry.Title = title;
+                        logEntry.TimeStamp = DateTime.Now; //so that it uses the local time zone/settings instead of GMT
+                        logEntry.Message = message;
+                        logEntry.ExtendedProperties = extendedProperties;
+                        Logger.SetContextItem("ExtendedProperties", extendedPropertiesXML);
+                        Logger.Write(logEntry);
+
+                    });
+                }
+            }
+            finally
+            {
+                //if there is a problem in serializing the payload, then just proceed with the message
+            }
+        }
+
+
+        private void LogServiceRequestResponse<TPayload>(string message, TPayload payload, Category category = Category.General, TraceEventType severity = TraceEventType.Information, Priority priority = Priority.Normal, string title = "", IDictionary<string, object> extendedProperties = null, [CallerMemberNameAttribute]
+                                  string callerName = "", [CallerFilePath]
+                                  string callerSource = "", [CallerLineNumber]
+                                  int callerLineNumber = 0)
+        {
+            try
+            {
+                var fileStart = callerSource.LastIndexOf(@"NLsApp\");
+                if (fileStart > 0)
+                    callerSource = callerSource.Substring(fileStart);
+                title = string.Format(@"logged {0} from {1} => {2} at line {3}", title, callerSource, callerName, callerLineNumber);
+                if (severity == TraceEventType.Error)
+                {
+                    AddExceptionToCache(title, message);
+                }
+
+                var logEntry = new LogEntry()
+                {
+                    Severity = severity,
+                    Priority = (int)priority,
+                    Categories = new string[] { category.ToString() },
+                };
+                // optimizing the log writing process so that if the filters are set and the entry is not supposed to be written, then don't even go further.
+                //if (Logger.ShouldLog(logEntry))
+                //{
+                    var loggedInUser = GetLoggedInUserId();
+                    var extendedPropertiesXML = GetExtendedProperties(loggedInUser);
+
+                    Task.Factory.StartNew(() =>
+                    {
+                        title = title.Substring(0, Math.Min(title.Length, 150));
+                        message = message.Substring(0, Math.Min(message.Length, 1500));
+
+                        if (extendedProperties == null)
+                            extendedProperties = new Dictionary<string, object>();
+
+                        try
+                        {
+                            //- we should look at the possibility of having value types for the payload
+                            var isNullableType = Equals(null, default(TPayload)); // ref type or nullable value type
+                            if ((isNullableType && !Equals(payload, default(TPayload))) || !isNullableType)
+                                extendedProperties.Add(@"Payload", SerializationUtil.SerializeToXml<TPayload>(payload));
+                        }
+                        finally
+                        {
+                            //if there is a problem in serializing the payload, then just proceed with the message
+                        }
+                        logEntry.Title = title;
+                        logEntry.TimeStamp = DateTime.Now; //so that it uses the local time zone/settings instead of GMT
+                        logEntry.Message = message;
+                        logEntry.ExtendedProperties = extendedProperties;
+                        Logger.SetContextItem("ExtendedProperties", extendedPropertiesXML);
+                        Logger.Write(logEntry);
+
+                    });
+              //  }
+            }
+            finally
+            {
+                //if there is a problem in serializing the payload, then just proceed with the message
+            }
+        }
+
+
+        private void AddExceptionToCache(string title, string message)
+        {
+            try
+            {
+                if(string.IsNullOrEmpty(message))
+                {
+                    return;
+                }
+                message = Regex.Replace(message, @"\t|\n|\r|\\", "");
+                if (HttpContext.Current != null)
+                {                   
+                    RYApplicationMessage RYApplicationMessage = new RYApplicationMessage();
+                    if (message.IndexOf("PW-") == 0)
+                    {                        
+                        RYApplicationMessage.MessageType = RYApplicationMessage.RYMessageType.Info;
+                    }
+                    else
+                    {                      
+                        RYApplicationMessage.MessageType = RYApplicationMessage.RYMessageType.Error;
+                    }
+                    RYApplicationMessage.Message = message ;
+                    var errorList = HttpContext.Current.Items[@"ExceptionDetails"] as List<RYApplicationMessage> ?? new List<RYApplicationMessage>();
+                    errorList.Add(RYApplicationMessage);
+                    HttpContext.Current.Items.Add(@"ExceptionDetails", errorList);
+
+                    //if (logStr != null && logStr.ToString().IndexOf(msg) == -1)
+                    //{
+                    //    logStr += "</br>" + msg;
+                    //    HttpContext.Current.Items[@"ExceptionDetails"] = logStr;
+                    //} 
+                    //else
+                    //{
+                    //    logStr = msg;
+                    //    HttpContext.Current.Items.Add(@"ExceptionDetails", logStr);
+                    //}
+                    
+
+                }
+            }
+            catch (Exception ex)
+            {
+                var e = ex.Message;
+                //SS: This is done so that this section of code should not break any process as this is just for showing the exception
+            }
+            
+        }
+
+        public void Log(Exception ex, Category category = Category.General, Priority priority = Priority.Normal, [CallerMemberNameAttribute]
+                           string callerName = "", [CallerFilePath]
+                           string callerSource = "", [CallerLineNumber]
+                           int callerLineNumber = 0)
+        {
+            Log<Object>(ex, null, category, priority, callerName, callerSource, callerLineNumber);
+        }
+
+        public void Log<TPayload>(Exception ex, TPayload payload, Category category = Category.General, Priority priority = Priority.Normal, [CallerMemberNameAttribute]
+                                  string callerName = "", [CallerFilePath]
+                                  string callerSource = "", [CallerLineNumber]
+                                  int callerLineNumber = 0)
+        {
+            string exstring = string.Empty;
+            try
+            {
+                exstring = SerializationUtil.SerializeEntityByNetDataContract(ex);
+                exstring = exstring.Substring(0, Math.Min(30000, exstring.Length));
+            }
+            catch (Exception ex1)
+            {
+                Log(ex1, category: Category.EventViewer);
+            }
+
+            var errorMessage = ex.Message;
+
+            if (category == Category.BPM || category == Category.WebService)
+                errorMessage = "Service Integration Error  -  " + errorMessage; 
+
+            var aggregateException = ex as AggregateException;
+            if (aggregateException != null)
+            {
+                foreach (var exception in aggregateException.Flatten().InnerExceptions)
+                {
+                    errorMessage += "Aggregate Exception:" + exception.Message;
+                    errorMessage += "Inner Exception: " + exception.InnerException.Message;
+                }
+            }
+            else if (ex.InnerException != null && ex.InnerException.InnerException != null && !string.IsNullOrEmpty(ex.InnerException.InnerException.Message))
+            {
+               errorMessage += "<b> Inner Exception: </b>" + ex.InnerException.InnerException.Message;
+            }
+
+
+            Log(errorMessage, payload, category, TraceEventType.Error, priority, @"Exception", new Dictionary<string, object>() { { @"Exception", exstring } }, callerName, callerSource, callerLineNumber);
+        }
+
+        public void LogEntry(Category category = Category.General, [CallerMemberNameAttribute]
+                             string callerName = "", [CallerFilePath]
+                             string callerSource = "", [CallerLineNumber]
+                             int callerLineNumber = 0)
+        {
+            Log<Object>(string.Empty, null, category, TraceEventType.Verbose, Priority.Normal, @"Entry", null, callerName, callerSource, callerLineNumber);
+        }
+
+        public void LogExit(Category category = Category.General, [CallerMemberNameAttribute]
+                            string callerName = "", [CallerFilePath]
+                            string callerSource = "", [CallerLineNumber]
+                            int callerLineNumber = 0)
+        {
+            Log<Object>(string.Empty, null, category, TraceEventType.Verbose, Priority.Normal, @"Exit", null, callerName, callerSource, callerLineNumber);
+        }
+
+        public bool HandleException(Exception ex, Category category = Category.General)
+        {
+            return HandleException<Object>(ex, null, category);
+        }
+
+        public bool HandleException<TPayload>(Exception ex, TPayload payLoad, Category category = Category.General)
+        {
+            ex.Data.Add(@"Payload", payLoad);
+            ex.Data.Add(@"LoggedInUser", GetLoggedInUserId());
+            var exManager = ServiceLocator.Current.GetInstance<ExceptionManager>();
+            Exception exceptionToRethrow;
+            bool rethrow = exManager.HandleException(ex, category.ToString(), out exceptionToRethrow);
+
+            if (rethrow)
+            {
+                if (exceptionToRethrow != null)
+                    throw exceptionToRethrow;
+                else
+                    throw ex;
+            }
+            return rethrow;
+        }
+
+        private string GetLoggedInUserId()
+        {
+            string loggedInUser = string.Empty;
+
+            try
+            {
+                var context = UserContext.Current;
+                if (context == null || string.IsNullOrEmpty(context.RYUserId))
+                {
+                    loggedInUser = Thread.CurrentPrincipal.Identity.Name;
+                    if (loggedInUser == "")
+                        return "Service";
+                    if (loggedInUser.Contains(@"\"))
+                        loggedInUser = loggedInUser.Split('\\')[1].ToUpperInvariant();
+                }
+                else
+                    loggedInUser = context.RYUserId;
+            }
+            catch (Exception ex)
+            {
+                string str = ex.Message;
+            }
+            finally
+            {
+                //if there is any issue getting user id because of different contexts, proceed with the log writing
+            }
+            return loggedInUser;
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="loggedInUser"></param>
+        /// <returns></returns>
+        private string GetExtendedProperties(string loggedInUser)
+        {
+            var url = string.Empty;
+            var extendedPropertiesXML = new StringBuilder();
+
+            if (HttpContext.Current != null && HttpContext.Current.Handler != null)
+                url = HttpContext.Current.Request.Url.ToString();
+
+            extendedPropertiesXML.AppendFormat("<ExtendedProperties>");
+            extendedPropertiesXML.AppendFormat(GetKeyValueElement("LoginUserId", loggedInUser));
+
+            if (!string.IsNullOrEmpty(url))
+            {
+                extendedPropertiesXML.AppendFormat(GetKeyValueElement("Url", HttpUtility.UrlEncode(url)));
+                int startIndex = url.IndexOf('?');
+
+                if (startIndex > 0)
+                {
+                    string queryString = url.Substring(startIndex + 1, url.Length - startIndex - 1);
+                    NameValueCollection queryStringParams = HttpUtility.ParseQueryString(queryString);
+
+                    if (queryStringParams.Count > 0)
+                    {
+                        if (queryStringParams.AllKeys.Contains(WID))
+                            extendedPropertiesXML.AppendFormat(GetKeyValueElement(WID, queryStringParams[WID]));
+                        if (queryStringParams.AllKeys.Contains(CFNUMBER))
+                            extendedPropertiesXML.AppendFormat(GetKeyValueElement(CFNUMBER, queryStringParams[CFNUMBER]));
+                        if (queryStringParams.AllKeys.Contains(FACILITYTRANSACTIONNUMBER))
+                            extendedPropertiesXML.AppendFormat(GetKeyValueElement(FTIONNUMBER, queryStringParams[FTIONNUMBER]));
+                        if (queryStringParams.AllKeys.Contains(NLTRANSACTIONNUMBER))
+                            extendedPropertiesXML.AppendFormat(GetKeyValueElement(NLTRANSACTIONNUMBER, queryStringParams[NLTRANSACTIONNUMBER]));
+                    }
+                }
+            }
+            extendedPropertiesXML.AppendFormat("</ExtendedProperties>");
+
+            return extendedPropertiesXML.ToString();
+        }
+
+        /// <summary>
+        /// Method to insert an element with ExtendedProperty as parent element
+        /// </summary>
+        /// <param name="key">Key</param>
+        /// <param name="value">Value</param>
+        /// <returns></returns>
+        private string GetKeyValueElement(string key, string value)
+        {
+            if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value))
+                return string.Format("<ExtendedProperty><Key>{0}</Key><Value>{1}</Value></ExtendedProperty>", key, value);
+            return string.Empty;
+        }
+    }
+}
