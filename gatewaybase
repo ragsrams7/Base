@@ -1,0 +1,75 @@
+ protected async Task<TResult> InvokeWebAPIService<TParam, TResult>(TParam param,string baseURL,string methodName, bool isCreditalRequire = false)
+        {
+            TResult tResult = default(TResult);
+
+            try
+            {
+                PermissiveCertificatePolicy.Enact("");
+                NetworkCredential credentials;
+                HttpClientHandler handler;
+                HttpClient Client;
+                //Log Request
+                //if (shouldLogRequest)
+                //  LogServiceRequest((System.Linq.Expressions.MethodCallExpression)wsCallExpression.Body);
+                ServicePointManager.Expect100Continue = true;
+                ServicePointManager.SecurityProtocol = SecurityProtocolType.Ssl3 | SecurityProtocolType.Tls | SecurityProtocolType.Tls11 | SecurityProtocolType.Tls12;
+
+                System.Net.ServicePointManager.ServerCertificateValidationCallback += (se, cert, chain, sslerror) =>
+                {
+                    return true;
+                };
+
+
+                if (isCreditalRequire)
+                {
+                    string svcEncryptedPwd = ConfigurationManager.AppSettings.Get("ServiceAccountPassword");
+                    if (!string.IsNullOrEmpty(svcEncryptedPwd))
+                        SvcPassword = DecryptionHelper.DecryptString(svcEncryptedPwd);
+
+                    credentials = new NetworkCredential
+                    {
+                        Domain = "AD",
+                        Password = SvcPassword,
+                        UserName = ConfigurationManager.AppSettings.Get("ServiceAccountId")
+                    };
+
+                    handler = new HttpClientHandler { Credentials = credentials };
+                    Client = new HttpClient(handler);
+                }
+                else
+                {
+
+                    X509Store Store = new X509Store(StoreName.Root, StoreLocation.LocalMachine);
+                    Store.Open(OpenFlags.ReadOnly);
+                    X509Certificate2Collection CertColl =
+                        Store.Certificates.Find(X509FindType.FindBySubjectDistinguishedName,
+                            ConfigurationManager.AppSettings["CertifiacateName"].ToString(), true);
+
+                    X509Certificate2 certificate = CertColl[0];
+
+                    WebRequestHandler handler1 = new WebRequestHandler();
+                    handler1.ClientCertificates.Add(certificate);
+                    Client = new HttpClient(handler1);
+                }
+                LoggingSvc.Log(string.Format(Call_Log_Message, baseURL, methodName), severity: System.Diagnostics.TraceEventType.Information, category: Infrastructure.Contracts.Category);
+                Client.BaseAddress = new Uri(baseURL);
+                Client.DefaultRequestHeaders.Accept.Clear();
+                Client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                var result = await Client.PostAsJsonAsync(methodName, param).ConfigureAwait(false);
+                result.EnsureSuccessStatusCode();
+
+
+                tResult = await result.Content.ReadAsAsync<TResult>();
+            }
+            catch (Exception ex)
+            {
+               
+                    //var msg = string.Format("Exception in Service Gateway -> {0} -> {1}: {2}",
+                    //    typeof(TChannel).ToString(), wsCallExpression.ToString(), ex.Message);
+                    LoggingSvc.Log(ex, category: Category.Web);
+
+                    throw;
+            }
+
+            return tResult;
+        }
