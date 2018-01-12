@@ -13,3 +13,60 @@
         bool RunControllerValidations(AuthorizationContext authorizationcontext);
          */
     }
+
+
+
+public class SecurityService : ISecurityService
+    {
+        public bool Authenticate(HttpContextBase httpContext)
+        {
+            //this is a default implementation assuming windows authentication take care of actual authentication service
+            //if there needs to be a different authentication machenism, 
+            // the different implementation of ISecurityService should be mapped in DI
+            return httpContext.User.Identity.IsAuthenticated;
+        }
+
+        public bool Authorize(string userID, IEnumerable<PermissionsEnum> permissionList = null)
+        {
+            bool isAuthorize = false;
+            if (UserContext.Current.UserPermissions != null && UserContext.Current.UserPermissions.Any())
+            {
+                var permission = UserContext.Current.UserPermissions.Join(permissionList, pvm => pvm.PermissionID, pid => (int) pid, (pvm, pid) => new {pid});
+                if (permission.Any())
+                {
+                    isAuthorize = true;
+                }
+            }
+            return isAuthorize;
+        }
+
+        public bool Authorize(string userID, AuthorizationContext context = null)
+        {
+            return true;
+        }
+
+        public SecurityValidationResult ValidateWebRequest(AuthorizationContext authorizationContext, Func<AuthorizationContext, SecurityValidationResult> validationFunc)
+        {
+            if (authorizationContext == null)
+                throw new ArgumentNullException();
+
+            if (OutputCacheAttribute.IsChildActionCacheActive(authorizationContext))
+            {
+                throw new InvalidOperationException();
+            }
+            SecurityValidationResult result;
+
+            if ((result = validationFunc(authorizationContext)).Result)
+            {
+                HttpCachePolicyBase cachePolicy = authorizationContext.HttpContext.Response.Cache;
+                cachePolicy.SetProxyMaxAge(new TimeSpan(0));
+                cachePolicy.AddValidationCallback((HttpContext httpContext, object data, ref HttpValidationStatus validationStatus) =>
+                {
+                    validationStatus = validationFunc(authorizationContext).Result ? HttpValidationStatus.Valid : HttpValidationStatus.IgnoreThisRequest;
+                }, null);
+            }
+
+            return result;
+        }
+
+    }
