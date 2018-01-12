@@ -1,0 +1,51 @@
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, Inherited = true, AllowMultiple = true)]
+    public class RYAuthorizeAttribute : FilterAttribute, IAuthorizationFilter
+    {
+        public string UserID { get; set; }
+        public PermissionsEnum[] PermissionList { get; set; }
+
+        public void OnAuthorization(AuthorizationContext context)
+        {
+            SecurityValidationResult result;
+            if (!(result = ServiceLocator.Current.GetInstance<ISecurityService>().ValidateWebRequest(context, ValidateRequest)).Result) 
+            {
+                context.Result = context.GetErrorResult(new UnauthorizedAccessException(), statusCode: ((int)HttpStatusCode.Unauthorized), message: string.Format(@"{0}", "You are not authorized."));
+            }
+        }
+
+        protected virtual SecurityValidationResult ValidateRequest(AuthorizationContext context)
+        {
+            SecurityValidationResult result = new SecurityValidationResult();
+            if (!string.IsNullOrWhiteSpace(UserID) && UserID != UserContext.Current.RYUserId)
+            {
+                result.Result = false;
+                result.Message = "You are not authorized"; // LocalizedStrings.Ext_Message_Unauthorized_SpecificUser;
+                IList<RYApplicationMessage> messages = new List<RYApplicationMessage>();
+                messages.Add(new RYApplicationMessage(RYApplicationMessage.RYMessageType.Error, "", "Message:You are not authorized."));
+                var str = new JavaScriptSerializer().Serialize(messages);
+               // HttpContext.Current.Items.Add(@"ExceptionDetails", messages);
+                System.Web.HttpContext.Current.Response.AppendHeader("ExceptionDetail", str);
+
+                return result;
+            }
+
+            ISecurityService securitySvc = ServiceLocator.Current.GetInstance<ISecurityService>();
+            if (!(securitySvc.Authenticate(context.HttpContext) && (PermissionList == null || PermissionList.Count() == 0 || (PermissionList != null && PermissionList.Count() > 0 && securitySvc.Authorize(UserID, PermissionList)))))
+            {
+                string permissionList = string.Empty;
+                if (PermissionList != null && PermissionList.Count() > 0)
+                    permissionList = string.Join(@", ", PermissionList.ToArray());
+                result.Result = false;
+                result.Message = "You do not have permission."; // string.Format(LocalizedStrings.Ext_Message_Unauthorized_Permission, permissionList);
+                IList<RYApplicationMessage> messages = new List<RYApplicationMessage>();
+                messages.Add(new RYApplicationMessage(RYApplicationMessage.RYMessageType.Error, "", "You do not have permission."));
+                var str = new JavaScriptSerializer().Serialize(messages);
+                System.Web.HttpContext.Current.Response.AppendHeader("ExceptionDetail", str);
+                //HttpContext.Current.Items.Add(@"ExceptionDetails", messages);
+            }
+
+            return result;
+        }
+
+
+    }
