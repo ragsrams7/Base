@@ -1,0 +1,3040 @@
+/*
+Bank of Tokyo-Mitusbishi UFJ - Common Web Framework - JS file
+The common JS file for the BTMU web applications. The script will always be included 
+for all the pages in the applications.
+
+History
+* 04/11/2012 created by Naing
+
+* 08/07/2012 modified by Naing
+ Added the graph control functions
+
+* 08/22/2012 modified by Naing
+ Added gridDetailViewInit function
+
+* 09/10/2012 modified by Naing
+ Modified the ActionKey evaluation logic to take Parameter name as well as Property name
+
+* 09/11/2012 modified by Naing
+ Added resizePage function call which dynamically resize the content pane to fit the content in it every time page layout is re-initialized.
+
+* 09/12/2012 modified by Naing
+ Added additional parameters: data, success, failure to the function loadAjaxRegion
+
+* 09/27/2012 modified by Naing
+ Added data source functions
+
+* 10/01/2012 modified by Naing
+ Modified data source functions to accept the control id instead of real data source control and updated the jsondata hidden control every time the data source is updated.
+
+* 10/02/2012 modified by Naing
+ Added resizePage call after the grid detail view rendering.
+ Added delete function for data source operations.
+ Added json hidden field for changes as well as everything including changes.
+
+* 11/01/2012 modified by Naing
+ Added tooltip support
+ Fixed the issue with the action key returning undefined.
+
+* 01/02/2013 modified by Naing
+ Added refreshGraphControl function
+
+* 01/30/2013 modified by Naing
+ Added cascading querystring parameter feature
+
+* 02/01/2013 modified by Naing
+ Fixed js issue in appendCascadingQueryStringParameters
+
+* 7/12/2013 modified by Aneesh
+ Added a few generic functions to support uri parameter type as well as json type 
+ serialization(jquery) of forms/grids etc
+
+ * 9/4/2013 modified by Aneesh
+ Added method dateDiffInDays
+
+ * 4/29/2014 modified by Soumya
+ Fixed the UpdateDatasource issue of saving the object as string.
+
+ * 5/02/2014 modified by Soumya
+ IFrame removal code. Changet No: 13303
+
+ * 5/14/2014 modified by Soumya
+ Add the functionality to pass the user defined paramter with common paramter
+
+ * 5/27/2014 modified by DO
+ Refactoring of the entire file
+
+ * 6/30/2014 modified by Soumya
+ DataAnotation Client Side validation fix. Changeset No:1530
+
+ * 7/01/2014 modified by Soumya
+ DataAnotation Client Side validation fix for checkbox. Changeset No:1530
+
+ * 01/08/2015 modified by Soumya
+ Displaying the server side error for Grids
+
+*/
+
+// contains the messages from the resource
+//////var Messages = {};
+
+
+
+var LoansApp = {};
+var GridSummaryErrors = []; //SS 01/08/2015
+//global config variable which can hold different values that will be made available to all the pages in the app
+var Application = {
+    CascadingQueryStringParameters: [],
+    ContextPath: '/Web/',// setting to default Web/ per the server setups to catch rare case scenarios where ContextPath is getting used before it is set.
+    LastActiveChildWindow: null,
+    GridEmptyRowDataArray: [],
+    ObjGridCommandParamterDefination: null,
+    ObjGridCommandParamterDefinationArray: [],
+    TimerBindClientModel: null,
+    GridParentKey: null,
+    PopupCount: 0,
+    EnableGetMessages: true,
+    ShowProgressForReload: false,
+    ValidMinDate: Date.parse('01/01/1753'),
+    ValidMaxDate: Date.parse('12/31/9999'),
+    BaseURL: ''
+};
+
+
+
+LoansApp.Common = function () {
+    
+    this.DisplayResourceMsg = function (keyName) {
+        return Messages[keyName];
+    }
+
+    this.SerializePage = function (isSerializeGrids) { //Uppercase conversion
+
+        // Serialize all forms and grids available in html page.
+        var serializedData = $('form').serialize();
+        if (isSerializeGrids) {
+            var grids = $('div[data-role="grid"]');
+
+
+            //SS: 09/03/2014 Commented the below code as JsonChangedData and JsonData property is been removed from server side code for GenerateGrid
+            //SS: 03/14/2014 Removing the JsonChangedDatam propery for the grid. this is to fix the issue, if multiple grids are there then the grid data is not submited
+            /*if (grids != null && grids.length > 0) {
+                $.each(grids, function () {
+                    var grid = $(this);
+                    var gridName = grid.attr('name');
+                    var gridId = grid.attr('id');
+                    var gridName = (gridName != null) ? gridName : gridId;
+                    var removeJsonChangedData = "&" + gridName + "JsonChangedData=";
+                    var removeJsonData = "&" + gridName + "JsonData=";
+
+                    serializedData = serializedData.replace(removeJsonChangedData, '');
+                    serializedData = serializedData.replace(removeJsonData, '');
+                });
+            }*/
+
+            serializedData += '&' + grids.serializeGrids();
+        }
+
+        return serializedData;
+    }
+
+    //SS: 11/04/2013 This will serialize the page data to a JsonObject
+    //serializePage, serializeGrids, serializeGrid, serializeArrayObject functions are no more needed
+    this.SerializePageToJsonObject = function (formAction, actionButton) { //Uppercase conversion
+
+        // Serialize all forms and grids available in html page into JSON array.
+        var serializedData = null;
+        if (!Helper.IsNullOrEmpty(formAction)) {
+            serializedData = $("form[action~='" + formAction + "']").serializeAll('json');
+        } else if (actionButton != null) {
+            serializedData = $(actionButton).closest("form").serializeAll('json');
+        } else if (Helper.IsNullOrEmpty(formAction)) {
+            serializedData = $('form').serializeAll('json');
+        }
+
+        var grids = null;
+        if (!Helper.IsNullOrEmpty(formAction)) {
+            grids = $("form[action~='" + formAction + "']").find('div[data-role="grid"]');
+        } else if (actionButton != null) {
+            grids = $(actionButton).closest("form").find('div[data-role="grid"]');
+        } else if (Helper.IsNullOrEmpty(formAction)) {
+            grids = $('div[data-role="grid"]');
+        }
+
+        if (grids.length > 0) {
+            $.each(grids, function () {
+                var grid = $(this);
+                var gridId = grid.attr('id');
+                var gridName = grid.attr('name');
+                if (!!window[gridId + 'DataSource']) {
+                    var gridData = window[gridId + 'DataSource'].data().toJSON();
+                    var modelName = (gridName != null) ? gridName : gridId;
+                    serializedData[modelName] = gridData;
+                }
+            });
+        }
+        return serializedData;
+    }
+
+
+    this.IsValidDate = function (input) {
+        if (input == null || input == '') {
+            return true;
+        }
+        var validformat1 = /^\d{2}\/\d{2}\/\d{4}$/
+        var validformat2 = /^\d{1}\/\d{2}\/\d{4}$/
+        var validformat3 = /^\d{2}\/\d{1}\/\d{4}$/
+        var validformat4 = /^\d{1}\/\d{1}\/\d{4}$/
+
+        var returnval = false
+        if (validformat1.test(input.value) || validformat2.test(input.value) || validformat3.test(input.value) || validformat4.test(input.value))
+            alert("Invalid Date Format. Please input correct date and try again.")
+        else {
+            var monthfield = input.split("/")[0]
+            var dayfield = input.split("/")[1]
+            var yearfield = input.split("/")[2]
+            var dayobj = new Date(yearfield, monthfield - 1, dayfield)
+            if ((dayobj.getMonth() + 1 != monthfield) || (dayobj.getDate() != dayfield) || (dayobj.getFullYear() != yearfield))
+                alert("Invalid Day, Month, or Year range detected. Please input correct date and try again.")
+            else
+                returnval = true
+        }
+        return returnval
+    }
+
+
+    this.PrevalidatePopupForm = function (command, commandParameters, WindowDefinition, control) {
+        return true;
+        var isFormValid = true;
+        var form = $(control).closest("form");
+        isFormValid = Common.CheckValidation(command, control, form);
+        if (!command.IgnoreClientValidation && !isFormValid) {
+            return false;
+        }
+    }
+
+    this.SubmitFormAjax = function (form, actionUrl, command, control) {
+        var preActionResult = true;
+        var actionKeys = (command.EditableGridCommandParamterDefination != null && command.EditableGridCommandParamterDefination.ParamterDefinationValues != null) ?
+                            command.EditableGridCommandParamterDefination.ParamterDefinationValues : null;
+        if (actionKeys != null) {
+            $.each(actionKeys, function (key, value) {
+                if (key == new EditableGridExtension().CommandParamterType.PreActionFunction) {
+                    //SS 10/20/2014 : If there is multiple PreActionFunction the result will be override
+                    preActionResult = eval(value + "(command, control);");
+                    return;
+                }
+            });
+        }
+
+        if (preActionResult == false) {
+            return false;
+        }
+
+        //This will check for client side validation
+        var isFormValid = true;
+        isFormValid = Common.CheckValidation(command, control, form);
+        if (!command.IgnoreClientValidation && !isFormValid) {
+            Common.HighLightTabOnErrors();
+            return false;
+        } else {
+            //SS 10/23/2014: Clearing the tab error highlight
+            $('.k-tabstrip-items.k-reset li').removeClass(' tabstrip-errors  ');
+        }
+
+        var serializedData = Common.SerializePage(true);
+
+        //Add the branchcode & ignore warning flag from the layout as they 
+        //are not part of the form data.
+        //Naing:06/02/2015 - we are not checking IgnoreClientValidation for appending the IgnoreWarnings flag selection from user
+        //if (!command.IgnoreClientValidation) {
+        //if ($('#LayoutBranchCode').length > 0) {
+        //    if ($('#LayoutBranchCode').val() == "") {
+        //        //var message = branchCodeMessage;
+        //        var message = "Please select the branchcode";
+        //        Common.ShowAlertMessage(null, message, 'Alert', false, null, null, null, null);
+        //        return false;
+        //    }
+        //    serializedData = serializedData + "&SubmittingBranchCode=" + $('#LayoutBranchCode').val();
+        //}
+
+        if ($('#LayoutOverrideWarnings').length > 0) {
+            if ($('#LayoutOverrideWarnings').is(':checked'))
+                serializedData = serializedData + "&IgnoreWarnings=true";
+            else
+                serializedData = serializedData + "&IgnoreWarnings=false";
+        }
+        //}
+        serializedData += "&IgnoreValidation=" + command.IgnoreClientValidation;
+
+        $.invokeAjax({
+            url: actionUrl,
+            type: 'POST',
+            contentType: 'application/x-www-form-urlencoded; charset=UTF-8',
+            data: serializedData,
+            success: function (result, status, jqXhr) {
+                //Displaying Model State Error
+                var isModelStateValid = Common.DisplayModelErrors(jqXhr, form, false);
+                if (!isModelStateValid) {
+                    return false;
+                }
+                if (actionKeys != null) {
+                    $.each(actionKeys, function (key, value) {
+                        if (key == new EditableGridExtension().CommandParamterType.PostActionFunction) {
+                            var returnVal = eval(value + "(result);");
+                            return;
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+
+
+    this.IsExceptionExists = function (jqXhr) {
+        try {
+            //Naing:08/11/2015 - skip the "System Exception" alert message for the case which we have exception in response header
+            /*
+            var exceptionDetail = jqXhr.getResponseHeader('ExceptionDetail');
+            var isException = false;
+
+            //SS 01/25/2015: Skipping the PW exception and checking if other exception exists
+            if (exceptionDetail) {
+                var jsonErrorMessages = eval(exceptionDetail);
+                $.each(jsonErrorMessages, function (key, value) {
+                    if (value.MessageType != 0 && value.Message.indexOf('PW-') == -1) {
+                        isException = true;
+                        return;
+                    }
+                });
+            }
+            if (isException || jqXhr.status != 200) {
+            */
+            if (jqXhr.status != 200) {
+                //var conf = !confirm("System exception occurred. Do you want to continue?");
+                alert("System exception occurred.");
+                //return conf;
+            }
+            return false;
+
+        } catch (theException) {
+            throw theException;
+        }
+    }
+
+    this.LoadValidationErrors = function () {
+        //var test = ovsErrors;
+        if (typeof ValidationErrors != 'undefined' && ValidationErrors != null) {
+            Common.DisplayModelErrors(null, $('form').first(), true);
+            if (typeof GetTabErrors != 'undefined') {
+                GetTabErrors();
+            }
+        }
+    };
+
+    /* 7/25/2014 created by Soumya*/
+    /* This function will display the exception*/
+    this.DisplayException = function (jqXhr) {
+        var exceptionDetail = jqXhr.getResponseHeader('ExceptionDetail');
+        if (exceptionDetail) {
+            Common.HandleException(exceptionDetail);
+        }
+        var errHtml = $("#dvException").html();
+        if (errHtml == "" || errHtml == "\n    \n") {
+            $("#dvException").hide();
+        }
+
+    };
+
+    this.ClosePrgressBar = function () {
+        kendo.ui.progress($("#appcontainer"), false);
+    }
+
+    this.ClearExceptionDisplay = function () {
+        var errHtml = $("#dvException").html('');
+        $("#dvException").hide();
+    }
+
+    this.HandleException = function (exceptionDetail) {
+        try {
+            if (exceptionDetail) {
+                //var jsonErrorMessages = $.parseJSON(exceptionDetail);
+                var jsonErrorMessages = eval(exceptionDetail);
+                $.each(jsonErrorMessages, function (key, value) {
+                    if (value.MessageType == 0 && value.Message.indexOf('PW-') == 0) {
+                        Common.DisplayValidationSummaryMessage(value.Message);
+                    } else {
+                        $('#dvException').append('<br/><br/>' + value.Message);
+                    }
+                });
+            }
+
+            //This code exist because there is direct call from .cshtml page
+            var errHtml = $("#dvException").html();
+            if (errHtml != "" && errHtml != "\n    \n") {
+                $("#dvException").show();
+            } else {
+                $("#dvException").hide();
+            }
+        } catch (theException) {
+            throw theException;
+        }
+    };
+
+    var gridErrorMsg = "There is error at row ";
+    /* 7/03/2014 created by Soumya*/
+    /* This function will display the Server side Custom Validation error*/
+    this.DisplayModelErrors = function (jqXhr, form, isErrorPageLoad) {
+        try {
+            var isModelStateValid = true;
+            if (typeof isErrorPageLoad == 'undefined' || isErrorPageLoad == false) {
+                Common.ClearAllErrors(form);
+            }
+            GridSummaryErrors = [];
+            if (form != null && ((jqXhr != null && jqXhr.responseText != null && jqXhr.responseText.indexOf('ModelErrors') != -1) ||
+            (typeof ValidationErrors != 'undefined' && ValidationErrors != null))) {
+                var errors = "";
+                var modelErrors = null;
+                var isModelErrors = true;
+                if (typeof ValidationErrors != 'undefined' && ValidationErrors != null) {
+                    modelErrors = ValidationErrors;
+                    isModelErrors = false;
+                } else {
+                    errors = $.parseJSON(jqXhr.responseText);
+                    modelErrors = errors.ModelErrors;
+                }
+
+                if (!$.isEmptyObject(modelErrors)) {
+                    $(".input-validation-error").removeClass("input-validation-error").addClass("valid");
+                    $(".field-validation-error").removeClass("field-validation-error").addClass("field-validation-valid").html("");
+
+                    $.each(modelErrors, function (key, value) {
+                        if (key.toLowerCase() == "workflowtransactionid" || key.toLowerCase() == "taskid") {
+                            return;
+                        }
+                        isModelStateValid = false;
+                        if (jQuery.type(value) == "array" && value.length > 0) {
+                            $.each(value, function (intValue, currentElement) {
+                                if (intValue == 0) {
+                                    value = currentElement;
+                                }
+                                else {
+                                    value = value + ' ' + currentElement;
+                                }
+                            });
+                        }
+                        //if (Helper.IsNullOrEmpty(value)) {
+                        if (value == undefined || value == null) {
+                            return;
+                        }
+                        //Converting the first letter to capital as teh Vaidation Key are generated by first letter as small and showing the control error message
+                        var valKey = key.substr(0, 1).toUpperCase() + key.substr(1);
+                        var startBracketIndex = key.lastIndexOf("[");
+                        var endBracketIndex = key.lastIndexOf("]");
+                        if (startBracketIndex != -1) {
+                            startBracketIndex += 1;
+                            //This is for Grid level validation
+                            var rowIndex = key.substr(startBracketIndex, endBracketIndex - startBracketIndex);
+                            //SS 01/26/2011: For collateral the tow index is the collateral id. hence finding the index based on id
+                            if (!isModelErrors) {
+                                var newRowIndex = -1;
+                                if (key.indexOf('CollateralViewModelList') == 0) {
+                                    newRowIndex = GridHelper.GetRecordIndexByRowValue('CollateralViewModelList', 'Id', rowIndex);
+                                }
+                                if (key.indexOf('ThirdPartyGuranteeViewModelList') == 0) {
+                                    newRowIndex = GridHelper.GetRecordIndexByRowValue('ThirdPartyGuranteeViewModelList', 'Id', rowIndex);
+                                }
+                                if (key.indexOf('FeeViewModelList') == 0) {
+                                    newRowIndex = GridHelper.GetRecordIndexByRowValue('FeeViewModelList', 'Id', rowIndex);
+                                }
+                                //Recalculating all the indexes
+
+                                if (newRowIndex != -1) {
+                                    key = key.replace(rowIndex, newRowIndex);
+                                    startBracketIndex = key.lastIndexOf("[") + 1;
+                                    endBracketIndex = key.lastIndexOf("]");
+                                    rowIndex = newRowIndex;
+                                }
+                            }
+                            rowIndex = parseInt(rowIndex) + 1;
+
+                            var gridSummaryCtrl = key.substr(0, startBracketIndex - 1);
+                            //Converting the first letter to capital as teh Vaidation Key are generated by first letter as small and showing the control error message
+                            gridSummaryCtrl = gridSummaryCtrl.substr(0, 1).toUpperCase() + gridSummaryCtrl.substr(1);
+                            var gridSummaryCtrlKey = key.substr(0, endBracketIndex + 1);
+
+                            var msg = gridErrorMsg + rowIndex;
+                            Common.DisplayGridValidationSummaryMessage(form, gridSummaryCtrl, msg);
+
+                            if (GridSummaryErrors[gridSummaryCtrlKey] == null) {
+                                GridSummaryErrors[gridSummaryCtrlKey] = new Array();
+                            }
+                            GridSummaryErrors[gridSummaryCtrlKey].push({
+                                field: key.substr(key.lastIndexOf("]") + 2), //SS 01/08/2015: storing the fieldname
+                                message: value
+                            });
+
+                            if (gridSummaryCtrlKey.match(/\[/g) != null && gridSummaryCtrlKey.match(/\[/g).length > 1) {
+                                var parentGridCtrlKey = gridSummaryCtrl.substr(0, gridSummaryCtrl.indexOf('.'));
+                                if (GridSummaryErrors[parentGridCtrlKey] == null) {
+                                    GridSummaryErrors[parentGridCtrlKey] = new Array();
+                                }
+                                msg = gridErrorMsg + rowIndex;
+                                GridSummaryErrors[parentGridCtrlKey].push({
+                                    field: gridSummaryCtrl.substr(gridSummaryCtrl.lastIndexOf("]") + 2), //SS 01/08/2015: storing the fieldname
+                                    message: msg
+                                });
+
+                                var parentGridStartBracketIndex = gridSummaryCtrl.lastIndexOf("[") + 1;
+                                var parentGridEndBracketIndex = gridSummaryCtrl.lastIndexOf("]");
+                                var parentGridRowIndex = gridSummaryCtrl.substr(parentGridStartBracketIndex, parentGridEndBracketIndex - parentGridStartBracketIndex);
+                                var parentGridCtrlName = parentGridCtrlKey.replace('[' + parentGridRowIndex + ']', '');
+                                parentGridRowIndex = parseInt(parentGridRowIndex) + 1;
+                                msg = gridErrorMsg + parentGridRowIndex;
+                                Common.DisplayGridValidationSummaryMessage(form, parentGridCtrlName, msg);
+                            }
+
+                        } else if (valKey && $("[name='" + valKey + "']").length > 0) {
+                            //Hihglighting the error control 
+                            var name = $("[name='" + valKey + "']");
+                            if (name[0].tagName == "SPAN") {
+                                //name.wrap("<div class='input-validation-error' id='diverror'></div>");
+                                var errorWrapper = name.closest("div.form-input");
+                                if (errorWrapper.length > 0) {
+                                    errorWrapper.removeClass("valid").addClass("input-validation-error");
+                                }
+                            }
+                            else {
+                                name.removeClass("valid").addClass("input-validation-error");
+                            }
+
+                            //$("[name='" + valKey + "']").removeClass("valid").addClass("input-validation-error");
+                            $("[data-valmsg-for='" + valKey + "']").removeClass("field-validation-valid").addClass("field-validation-error").html(value);
+                        } else if ((typeof isErrorPageLoad == 'undefined' || isErrorPageLoad == false) && Helper.IsNullOrEmpty(key)) {
+                            Common.DisplayValidationSummaryMessage(value);
+                        }
+                    });
+
+                    Common.HighLightTabOnErrors();
+                    Common.HighlightControlsOnError();
+
+                    ValidationErrors = null;
+                }
+            }
+
+            return isModelStateValid;
+        } catch (theException) {
+            throw theException;
+        }
+    };
+
+
+    var container = null;
+    var list = null;
+    this.DisplayValidationSummaryMessage = function (errorMessage) {
+        var form = $('form').first();
+        if (container == null) {
+            container = form.find(".validation-summary-errors").filter('[IsContainer]');
+        }
+        if (container.find("ul").length == 0) {
+            //SS 01/12/2015: Added a blank ul because the html have been cleared in Common.ClearFormError(form);
+            container.append('<ul></ul>');
+        }
+        if (list == null) {
+            list = container.find("ul");
+        }
+        if ($(list).length > 0 && $(list).html().indexOf(errorMessage) == -1) {
+            // if control do not exits then show the error in validation summary
+            $("<li />").html(errorMessage).appendTo(list);
+        }
+    };
+
+    this.DisplayGridValidationSummaryMessage = function (form, gridSummaryCtrl, msg) {
+        var gridSummaryContainer = form.find("[data-valmsg-for='" + gridSummaryCtrl + "']");
+        if (gridSummaryContainer.length > 0 && gridSummaryContainer.find("ul").length == 0) {
+            gridSummaryContainer.append('<ul></ul>');
+        }
+
+        else {
+            gridSummaryCtrl = $("[name='" + gridSummaryCtrl + "']")
+            if (gridSummaryCtrl.length > 0) {
+                gridSummaryCtrl = gridSummaryCtrl[0].id;
+                gridSummaryContainer = form.find("[data-valmsg-for='" + gridSummaryCtrl + "']");
+                if (gridSummaryContainer.length > 0 && gridSummaryContainer.find("ul").length == 0) {
+                    gridSummaryContainer.append('<ul></ul>');
+                }
+            }
+
+        }
+        var gridSummaryList = gridSummaryContainer.find("ul");
+
+        //SS 01/08/2015: Displaying the generic error msg for each row. If error is already displayed then it will be skipped
+        if (gridSummaryList.length > 0) {
+            var gridRowCount = 0;
+            var rowIndex = -1;
+            //Checking if the error message  for the particular row. If that row exits then only show the message.
+            var gridDataSource = GridHelper.GetDataSource(gridSummaryCtrl);
+            if (gridDataSource != null) {
+                gridRowCount = gridDataSource.data().length;
+            }
+            rowIndex = msg.replace(gridErrorMsg, '');
+            if ($(gridSummaryList).html().indexOf(msg) == -1 && gridRowCount >= parseInt(rowIndex)) {
+                $("<li class='li-validation-error'></li>").html(msg).appendTo(gridSummaryList);
+            }
+        }
+    };
+
+    this.DisplayPopupModelErrors = function (commandParameterValues, gridId) {
+        var popUpForm = $('#windowEdit' + gridId).find("form");
+        //SS 01/08/2015: Displaying the error coming from server
+        if (Helper.IsNullOrEmpty(Application.GridParentKey)) {
+            Application.GridParentKey = gridId + "[" + commandParameterValues.SelectedRowIndex + "]";
+        } else {
+            Application.GridParentKey += "." + gridId + "[" + commandParameterValues.SelectedRowIndex + "]";
+        }
+
+        if (GridSummaryErrors != [] && GridSummaryErrors[Application.GridParentKey] == null) {
+            gridName = $('#' + gridId + '').attr('name')
+            if (typeof gridName != 'undefined' && gridName.length > 0) {
+                Application.GridParentKey = gridName + "[" + commandParameterValues.SelectedRowIndex + "]";
+            }
+        }
+        if (GridSummaryErrors != [] && GridSummaryErrors[Application.GridParentKey] != null) {
+            Common.ClearFormErrors(popUpForm);
+            var gridErrors = GridSummaryErrors[Application.GridParentKey];
+            if (gridErrors != null) {
+                $.each(gridErrors, function (key, value) {
+                    var errCtrl = $("[name='" + value.field + "']");
+                    if (errCtrl.length > 0 && !errCtrl.is("div")) {
+                        //Hihglighting the error control 
+                        $("[name='" + value.field + "']").removeClass("valid").addClass("input-validation-error");
+                        $("[data-valmsg-for='" + value.field + "']").removeClass("field-validation-valid").addClass("field-validation-error").html(value.message);
+                    } else {
+                        // This will display the error messages for the grid
+                        Common.DisplayGridValidationSummaryMessage(popUpForm, value.field, value.message);
+                    }
+                });
+            }
+
+            Common.HighlightControlsOnError();
+        }
+    };
+
+    this.HighlightControlsOnError = function () {
+        $(".field-validation-error").parent().css("width", "250px");
+        $(".field-validation-error").siblings().addClass("k-validation-error-kendo-controls");
+        $(".k-multiselect").addClass("k-validation-error-kendo-controls"); //special case for multiselect
+    };
+
+    /* 6/30/2014 created by Soumya*/
+    /* This function will enable disable the client side validation based on ignore paramter*/
+    this.CheckValidation = function (command, control, formParam) {
+        var ignore = (command != null) ? command.IgnoreClientValidation : false;
+        var forms = null;
+        if (formParam != null) {
+            forms = formParam;
+        } else if (command.CommandType == 'SubmitAll' || command.CommandType == 'Submit') { // All forms should have the same action method if we are submitting them together.
+            forms = $('form').first();
+        } else {
+            forms = $(control).closest("form");
+        }
+
+        if (forms.length <= 0) {
+            return false;
+        }
+
+        if (ignore) {
+            //Ignoring the client side validation
+            Common.DeleteValidationRules(forms);
+            return true;
+        } else {
+            //Re enabling the client side validation 
+            Common.EnableValidationRules(forms);
+            return Common.ValidateControls(forms);
+        }
+    };
+
+    this.DeleteValidationRules = function (forms) {
+        $.each(forms, function () {
+            var form = $(this);
+            var settings = form.validate().settings;
+            for (var ruleIndex in settings.rules) {
+                delete settings.rules[ruleIndex];
+            }
+        });
+    };
+
+    this.EnableValidationRules = function (forms) {
+        //Re enabling the client side validation            
+        forms.removeData("validator").removeData("unobtrusiveValidation");
+        //This is for Checkbox validation
+        $.validator.unobtrusive.adapters.addBool("required", "required");
+
+        $.validator.unobtrusive.parse(document);
+    };
+
+    this.HighLightTabOnErrors = function () {
+        var tabStripsList = $('.k-tabstrip-items.k-reset li');
+        if (tabStripsList.length > 0 && !Helper.IsNullOrEmpty(tabStripsList[0].getAttribute("aria-controls"))) {
+            var tabId = tabStripsList[0].getAttribute("aria-controls").replace("-1", "");
+            var tabStrip = Helper.GetTabStripControl(tabId);
+            if (tabStrip != null && tabStrip.contentElements.length > 0) {
+                for (var i = 0; i < tabStrip.contentElements.length; i++) {
+                    if ($(tabStrip.contentElements[i]).find('.input-validation-error').length > 0 || $(tabStrip.contentElements[i]).find('.li-validation-error').length > 0) {
+                        $(tabStripsList[i]).addClass(' tabstrip-errors  ');
+                    } else {
+                        $(tabStripsList[i]).removeClass(' tabstrip-errors  ');
+                    }
+                }
+            }
+        }
+    };
+
+    this.ValidateControls = function (form) {
+        var isFormValid = true;
+        /*
+        //SS 02/01/2015: Commented as the Server error is getting erased when client validation is done.
+        var container = form.find("[data-valmsg-summary=true]");
+        var list = container.find("ul");
+        if (list.length > 0) {
+            list.empty();
+        }*/
+        if (!form.valid()) isFormValid = false;
+        var dropDownList = "";
+        var multiSelectList = "";
+        var numericTextBox = "";
+        var datePicker = "";
+        if (form != null && form.length > 0) {
+            dropDownList = form.find('select[data-val="true"][data-role="dropdownlist"]');
+            multiSelectList = form.find('select[data-val="true"][data-role="multiselect"]');
+            numericTextBox = form.find('input[data-val="true"][data-role="numerictextbox"]');
+            datePicker = form.find('input[data-val="true"][data-role="datepicker"]');
+        } else {
+            dropDownList = $('select[data-val="true"][data-role="dropdownlist"]');
+            multiSelectList = $('select[data-val="true"][data-role="multiselect"]');
+            numericTextBox = $('input[data-val="true"][data-role="numerictextbox"]');
+            datePicker = $('input[data-val="true"][data-role="datepicker"]');
+        }
+
+
+        var dropDown;
+        dropDownList.each(function () {
+            dropDown = this;
+            //$(dropDown).validate();
+            if (!$(this).valid()) isFormValid = false;
+        });
+
+
+        var multiSelect;
+        multiSelectList.each(function () {
+            multiSelect = this;
+            //$(numericText).validate();
+            if (!$(multiSelect).valid()) isFormValid = false;
+        });
+
+
+        var numericText;
+        numericTextBox.each(function () {
+            numericText = this;
+            //$(numericText).validate();
+            if (!$(numericText).valid()) isFormValid = false;
+        });
+
+        var datePickerText;
+        datePicker.each(function () {
+            datePickerText = this;
+            //$(numericText).validate();
+            if (!$(datePickerText).valid()) isFormValid = false;
+        });
+
+        Common.HighlightControlsOnError();
+
+        return isFormValid;
+    };
+
+    this.FormCommand = function (control, command) { //Uppercase conversion
+        try {
+            //if (command.JSFunction == '' || (command.JSFunction != '' && window[command.JSFunction](command))) {
+
+            /// <summary>
+            //TODO: SS Changes Start
+            //on 11/08/2013. Using eval to support calling function inside class and Passing the command paramter also to the javascript function
+            /// </summary>Command
+            var commandParameters = new Array();
+            if (command.EditableGridCommandParamterDefination != null && command.EditableGridCommandParamterDefination.ParamterDefinationValues != null) {
+                commandParameters = command.EditableGridCommandParamterDefination.ParamterDefinationValues;
+            }
+
+
+            //SK : Added logic for Cleae search controls
+            if (command.CommandType == 'JSClearLookupFunctionCall' && Helper.IsNullOrEmpty(command.JSFunction)) {
+                Common.ClearLookupControls(command);
+                return;
+            }
+            //SS: Add the below code to pass the client side function with user defenied parmaters and common paramters
+            var dynFuncCall = null;
+            if (!Helper.IsNullOrEmpty(command.JSFunction) && (command.JSFunction.lastIndexOf(')') != -1 && command.JSFunction.lastIndexOf(')') == command.JSFunction.length - 1)) {
+                dynFuncCall = command.JSFunction.replace(')', ", command, commandParameters, command.WindowDefinition, control)");
+            } else {
+                dynFuncCall = command.JSFunction + "(command, commandParameters, command.WindowDefinition, control)";
+            }
+
+            if (command.JSFunction == '' || (command.JSFunction != '' && eval(dynFuncCall))) {
+
+                if (command.CommandType == 'JSFunctionCallOnly' || command.CommandType == 'JSClearLookupFunctionCall') {
+                    return;
+                }
+
+                var form;
+                var isFormValid = true;
+                if (command.CommandType == 'CloseExtWindow') {
+                    form = $(control).closest("form");
+                    isFormValid = Common.CheckValidation(command, control, form);
+                    if (command.IgnoreClientValidation || isFormValid) {
+                        Common.CloseExtWindow();
+                    }
+                    return;
+                }
+
+
+
+                if (command.CommandType == 'SubmitAll') { // All forms should have the same action method if we are submitting them together.
+                    form = $('form').first();
+                }
+                else {
+                    form = $(control).closest("form");
+                }
+
+                var actionUrl = new String();
+                if (command.ActionRoute != '')
+                    actionUrl = command.ActionRoute;
+                else
+                    actionUrl = $(form).attr("action");
+
+                var actionKey = '';
+                if (!!command.ActionKeys) {
+                    actionKey = $.map(command.ActionKeys, function (key, index) {
+                        if (!!$('#' + key.PropertyName) && !!$('#' + key.PropertyName).val())
+                            return key.ParameterName + '=' + $('#' + key.PropertyName).val();
+                    }).join('&');
+                }
+                actionUrl = Helper.AppendActionKey(actionUrl, actionKey);
+                actionUrl = Helper.AppendCascadingQueryStringParameters(actionUrl);
+
+                if (command.TargetWindow == 'ExtWindow') {
+                    if (command.WindowDefinition != null && command.WindowDefinition.OnCloseJSFunction != '')
+                        command.WindowDefinition.OnCloseJSFunction = window[command.WindowDefinition.OnCloseJSFunction];
+
+                    if (command.IsIframe) {
+                        Common.OpenExtWindow(control.id + "ExtWindow", actionUrl, command.WindowDefinition, null, true);
+                    } else {
+                        Common.OpenExtWindow(control.id + "ExtWindow", actionUrl, command.WindowDefinition);
+                    }
+
+                } else {
+                    if (command.CommandType == 'Submit' || command.CommandType == 'SubmitAll') {
+                        Common.SubmitFormAjax(form, actionUrl, command, control);
+                    }
+                    else {
+                        if (command.TargetWindow == 'OwnBrowserWindow') {
+                            window.location = actionUrl;
+                        } else if (command.TargetWindow == 'NewBrowserWindow') {
+                            window.open(actionUrl, '_blank');
+                        } else if (command.TargetWindow == 'TopBrowserWindow') {
+                            window.open(actionUrl, '_top');
+                        }
+                    }
+                }
+            }
+        } catch (theException) {
+            throw theException;
+        }
+    }
+    //SS: 07/17/2014 
+    //This will be used to proccess the function which will be called on window close
+    this.ProcessWindowCloseJSFunction = function (windowDefinition, commandParameter) {
+
+        //1. Checking if Command Paramter is not nul then it will be passed to the onclose function
+        //2. Checking if the callfunction function have paramter then appending the command paramter as the next paramter to the callback 
+        if (windowDefinition != null && windowDefinition.OnCloseJSFunction && windowDefinition.OnCloseJSFunction != null) {
+            var dynFuncCall = windowDefinition.OnCloseJSFunction;
+            if (commandParameter != null) {
+                if (windowDefinition.OnCloseJSFunction.lastIndexOf(')') != -1 && windowDefinition.OnCloseJSFunction.lastIndexOf(')') == windowDefinition.OnCloseJSFunction.length - 1) {
+                    dynFuncCall = windowDefinition.OnCloseJSFunction.replace(')', ", commandParameter)");
+                } else {
+                    dynFuncCall = windowDefinition.OnCloseJSFunction + "(commandParameter)";
+                }
+            }
+            eval(dynFuncCall);
+        }
+    }
+
+
+    this.OpenExtWindow = function (name, actionRoute, windowDefinition, jsonData, isIframe, commandParameter) { //Uppercase conversion
+        try {
+            if ('undefined' === typeof isIframe) {
+                isIframe = false;
+            }
+
+            if ($('#' + name).length > 0) {
+                //$('#' + name).remove();
+                return;
+            }
+            var isUserClickClosed = false;
+            var targetKeyvalue = "_target=popup";
+            actionRoute = Helper.AppendActionKey(actionRoute, targetKeyvalue);
+            $("#Extwindows").html('<div id="' + name + '"></div>');
+            var window;
+            if (typeof jsonData == 'undefined' || jsonData == null) {
+
+                window = $("#" + name).kendoWindow({
+                    visible: false,
+                    title: windowDefinition != null ? windowDefinition.Title : name,
+                    content: actionRoute,
+                    modal: windowDefinition != null ? windowDefinition.Modal : true,
+                    actions: ["Minimize", "Maximize", "Close"],
+                    height: windowDefinition.Height + 'px',
+                    width: windowDefinition.Width + 'px',
+                    iframe: isIframe,
+                    refresh: function () { this.center(); },
+                    close: function (e) {
+                        GridHelper.RemoveGridParentKeyOnWindowClose();
+                        if (Application.PopupCount > 0) {
+                            Application.PopupCount = Application.PopupCount - 1;
+                        }
+                        isUserClickClosed = e.userTriggered;
+                    },
+                    deactivate: function (e) {
+                        try {
+                            if (!isUserClickClosed) {
+                                Common.ProcessWindowCloseJSFunction(windowDefinition, commandParameter);
+                            }
+                            this.destroy();
+                        } catch (theException) {
+                            throw theException;
+                        }
+                    }
+                }).data("kendoWindow");
+            }
+            else {
+                window = $("#" + name).kendoWindow({
+                    visible: false,
+                    title: windowDefinition != null ? windowDefinition.Title : name,
+                    modal: windowDefinition != null ? windowDefinition.Modal : true,
+                    actions: ["Minimize", "Maximize", "Close"],
+                    height: windowDefinition.Height + 'px',
+                    width: windowDefinition.Width + 'px',
+                    iframe: isIframe,
+                    refresh: function () { this.center(); },
+                    close: function (e) {
+                        GridHelper.RemoveGridParentKeyOnWindowClose();
+                        if (Application.PopupCount > 0) {
+                            Application.PopupCount = Application.PopupCount - 1;
+                        }
+                        isUserClickClosed = e.userTriggered;
+                    },
+                    deactivate: function (e) {
+                        try {
+                            if (!isUserClickClosed) {
+                                Common.ProcessWindowCloseJSFunction(windowDefinition, commandParameter);
+                            }
+                            this.destroy();
+                        } catch (theException) {
+                            throw theException;
+                        }
+                    }
+                }).data("kendoWindow");
+                // Post content to kendo window
+                //$.post(actionRoute, jsonData,
+                // function (content, status) {
+                //     var window = $("#" + name).data("kendoWindow");
+                //     window.content(content);
+                // });
+
+                $.invokeAjax({
+                    type: "POST",
+                    dataType: "html",
+                    contentType: 'application/json; charset=utf-8',
+                    url: actionRoute,
+                    data: jsonData,
+                    success: function (content, status) {
+                        var window = $("#" + name).data("kendoWindow");
+                        window.content(content);
+                    }
+                });
+            }
+
+            window.center().open();
+            Application.PopupCount = Application.PopupCount + 1
+            if (!Helper.IsNullOrEmpty(windowDefinition.Data)) {
+                window.content(windowDefinition.Data);
+            }
+
+            var innerframe = $(name).find('iframe');
+            innerframe.load(function () {
+                innerframe.activeExtWindow = window;
+                innerframe.contentWindow.id = innerframe.contentWindow.name = name + 'Frame';
+                $(innerframe).attr('id', name + 'Frame');
+                $(innerframe).attr('name', name + 'Frame');
+            });
+
+
+            Application.LastActiveChildWindow = window;
+
+        } catch (theException) {
+            throw theException;
+        }
+        
+        // Execute this logic only for snapshot pop-ups to perform the comments notification logic.
+        if (actionRoute.indexOf('transactionSnapshotId=') > 0) {
+            var workflowTrasnactionIDString = 'workflowTransactionId='
+            var beginIndex = actionRoute.indexOf(workflowTrasnactionIDString) + workflowTrasnactionIDString.length;
+            var endIndex = actionRoute.length;
+            
+            for (var i = 0; i < actionRoute.length; i++)
+            {
+                if (actionRoute[i] == '&' && i > beginIndex) {
+                    endIndex = i;
+                    break;
+                }
+            }
+
+            var workflowTrasnactionId = actionRoute.substring(beginIndex, endIndex);
+            Common.SetCommentNotification(workflowTrasnactionId);
+        }
+    }
+
+    this.CloseExtWindow = function (obj, noDestroy) {
+        var windowObj = null;
+        if (obj != null && obj.id != null && document.getElementById(obj.id).getAttribute("role") == 'button') {
+            windowObj = $(obj).closest(".k-window-content").data("kendoWindow");
+        } else if (obj != null && obj.GridId != null) {
+            windowObj = $('#' + obj.GridId).closest(".k-window-content").data("kendoWindow");
+        } else if (window.activeExtWindow != null) {
+            windowObj = window.activeExtWindow;
+        } else if (window.parent.Application.LastActiveChildWindow != null) {
+            windowObj = window.parent.Application.LastActiveChildWindow;
+        }
+
+        if (windowObj != null) {
+            windowObj.close();
+            if (!noDestroy) {
+                windowObj.destroy();
+            }
+        }
+    }
+
+    this.ArrangeNestedViewModelJson = function (data) { //Uppercase conversion
+        var splitter = /\.|\_/;
+
+        var nestedType;
+        for (var key in data) {
+            processExpression(data, key, data[key]);
+        }
+        function processExpression(dataNode, key, value) {
+            var e = key.split(splitter);
+            if (e.length > 1) {
+                var e2 = [];
+                if (dataNode[e[0]] == null) {
+                    var a = 1;
+                    var nestedType = new Object();
+                    nestedType[e[1]] = value;
+                    dataNode[e[0]] = nestedType;
+                }
+                else if (dataNode[e[0]] != null) {
+                    var nestedType = dataNode[e[0]];
+                    nestedType[e[1]] = value;
+                }
+                delete dataNode[key];
+            }
+        }
+        return data;
+    }
+
+    this.SetKendowWindowContentFromPost = function (content) {
+        var window = $("#" + name).data("kendoWindow");
+        window.content(content);
+    }
+
+    this.CreateExtensionWindow = function (name, actionRoute, windowDefinition) {
+        var kendoExtWindowContainer = $("#Extwindows");
+        var kendoExtWindow = $("#" + name + "Modal");
+
+        var createKendoWindow = function () {
+            if (kendoExtWindow.length <= 0) {
+                kendoExtWindowContainer.append("<div id='" + name + "Modal'></div>");
+
+                kendoExtWindow = $("#" + name + "Modal");
+            }
+
+            kendoExtWindow.kendoWindow({
+                title: windowDefinition != null ? windowDefinition.Title : "name",
+                content: actionRoute,
+                modal: true,
+                actions: ["Minimize", "Maximize", "Close"],
+                height: windowDefinition != null ? windowDefinition.Height + 'px' : '',
+                width: windowDefinition != null ? windowDefinition.Width + 'px' : '',
+                iframe: false,
+                deactivate: function () {
+                    try {
+                        if (windowDefinition != null && windowDefinition.OnCloseJSFunction && windowDefinition.OnCloseJSFunction != null) {
+                            windowDefinition.OnCloseJSFunction();
+                        }
+                        closeWindow();
+                    } catch (theException) {
+                        throw theException;
+                    }
+                },
+                refresh: function (e) {
+                    e.preventDefault = true;
+                }
+            }).data("kendoWindow");
+
+            return kendoExtWindow;
+        },
+            openWindow = function () {
+                if (actionRoute == null || actionRoute == '') {
+                    throw "UserDefinedActionRoute is required";
+                }
+
+                if (kendoExtWindow != null && kendoExtWindow.length > 0 && kendoExtWindow.data("kendoWindow") != null) {
+                    kendoExtWindow.data("kendoWindow").destroy();
+                    openWindow();
+                    return false;
+                }
+
+                createKendoWindow();
+                kendoExtWindow.data("kendoWindow").center().open();
+                return false;
+            },
+            closeWindow = function () {
+                if (kendoExtWindow.length > 0 && kendoExtWindow.data("kendoWindow") == null) {
+                    kendoExtWindow = kendoExtWindow.data("kendoWindow");
+                }
+                kendoExtWindow.data("kendoWindow").close();
+                return false;
+            };
+        return {
+            openWindow: openWindow,
+            closeWindow: closeWindow,
+        };
+    };
+
+    this.InitLayout = function (region, isControl) { //Uppercase conversion
+        if (!isControl) {
+            if (!region || region == '')
+                region = "#appcontainer";
+            region = $(region);
+
+        }
+        kendo.ui.progress(region, true);
+        kendo.init(region);
+        kendo.ui.progress(region, false);
+        $(document).tooltip({ show: { effect: "fade", delay: 250 } });
+        if ($('#tooltipCmd').attr('tooltipVisibility') == 'show') {
+            $('.icon-question-small').show();
+        }
+        else
+            $('.icon-question-small').hide();
+
+        Common.ApplyValidationStyle(region);
+        Common.HighlightControlsOnError();
+        //Helper.ResizePage();
+    }
+
+
+    this.ApplyValidationStyle = function (region) {
+
+        try {
+            if (region)
+
+                var divs = region.find(".form-panel-2-col > .form-field");
+            for (var i = 0; i < divs.length; i += 2) {
+                divs.slice(i, i + 2).wrapAll("<div class='form-rigid'></div>");
+
+            }
+
+            region.find('[data-val-required]').addClass('requiredField requiredFieldBorder');
+
+            //***Required Kendo Dropdowns***//
+            region.find('select[data-val-required]').parent().find('span .k-input').addClass('requiredField');
+            region.find('select[data-val-required]').parent().find('.k-dropdown-wrap').addClass('requiredFieldBorder');
+
+            //***Required Kendo Multi Select***//
+            region.find('select[data-val-required]').parent().find('.k-multiselect-wrap').addClass('requiredField requiredFieldBorder');
+
+
+            //***Kendo Number Numeric Text***/
+            region.find("*[data-val-required]").prev('input.k-formatted-value:text').addClass('requiredField requiredFieldBorder');
+            region.find('*[data-val-required]').parent('span.k-numeric-wrap').addClass('requiredFieldBorder');
+
+            region.find("[data-val-required][data-role='datepicker']").parent().parent().addClass('requiredFieldBorder');
+            var _datePickerText = region.find('span.k-picker-wrap input');
+            //this is to check invalid date range valid date is between 1753 to 9999
+            _datePickerText.blur(function () {
+                var enteredDate = $(this).val()
+                if ($.trim(enteredDate) == '') {
+                    return;
+                }
+                var res = enteredDate.replace(/\s/g, '').replace(/-/g, "/").replace(/\/0/g, "\/1");
+                var currentDate = Date.parse(res);
+                if (isNaN(currentDate) || currentDate > Application.ValidMaxDate || currentDate < Application.ValidMinDate) {
+                    $(this).parents('div.form-input').find('[data-valmsg-for]').removeClass("field-validation-valid").addClass("field-validation-error").html('Entered date: (' + enteredDate + ') is invalid');
+                    $(this).val('');
+                    $(this).addClass("k-validation-error-kendo-controls");
+                }
+                else {
+                    $(this).parents('div.form-input').find('[data-valmsg-for]').removeClass("field-validation-error").addClass("field-validation-valid").html("");
+                    $(this).removeClass("k-validation-error-kendo-controls");
+                }
+            });
+
+
+        } catch (theException) {
+            Common.ShowAlertMessage(null, CommonMessages.CommonApplyValidationStylesErr_Message, 'Loan App - error', true, null, null, null, null);
+        }
+    }
+
+
+
+    this.CreateGraphControl = function (controlId, data) { //Uppercase conversion
+        var st = new $jit.ST({
+            //id of viz container element
+            injectInto: controlId,
+            //set duration for the animation
+            duration: 800,
+            //set animation transition type
+            transition: $jit.Trans.Quart.easeInOut,
+            //set distance between node and its children
+            levelDistance: 40,
+            //useCanvas: canvas,
+            orientation: 'bottom',
+            align: 'center',
+            levelsToShow: 99,
+            offsetX: 0,
+            offsetY: -200,
+            constrained: false,
+            width: 600,
+            height: 1000,
+
+            //enable/diable panning/ zooming
+            Navigation: {
+                enable: false,
+                panning: false,
+                zooming: 20
+            },
+
+            //set node and edge styles
+            //set overridable=true for styling individual
+            //nodes or edges
+            Node: {
+                height: 65,
+                width: 100,
+                //autoHeight: true,
+                //autoWidth: true,
+                type: 'ellipse',
+                //color: '#aaa',
+                //color: '#ffc',
+                color: '#EDF9E8',
+                overridable: false,
+                //set canvas specific styles
+                //like shadows
+                CanvasStyles: {
+                    //shadowColor: '#ccc',
+                    shadowColor: '#ffffff',
+                    shadowBlur: 10
+                }
+            },
+
+            Edge: {
+                type: 'bezier', //'quadratic',//'arrow',//
+                overridable: true,
+                color: '#ff0000'
+            },
+
+            onBeforeCompute: function (node) {
+                //Log.write("loading " + node.name);
+            },
+
+            onAfterCompute: function () {
+                //Log.write("done");
+            },
+
+            //This method is called on DOM label creation.
+            //Use this method to add event handlers and styles to
+            //your node.
+            onCreateLabel: function (label, node) {
+                label.id = node.id;
+                label.innerHTML = node.name;
+                label.onclick = function () {
+                };
+                //set label styles
+                var style = label.style;
+                style.width = 100 + 'px';
+                style.height = 30 + 'px';
+                style.cursor = 'pointer';
+                style.color = '#5D9745';
+                style.fontSize = '0.8em';
+                style.textAlign = 'center';
+                style.paddingTop = '8px';
+            },
+
+            //This method is called right before plotting
+            //a node. It's useful for changing an individual node
+            //style properties before plotting it.
+            //The data properties prefixed with a dollar
+            //sign will override the global node style properties.
+            onBeforePlotNode: function (node) {
+                node.width = 300 + 'px';
+            },
+
+            //This method is called right before plotting
+            //an edge. It's useful for changing an individual edge
+            //style properties before plotting it.
+            //Edge data proprties prefixed with a dollar sign will
+            //override the Edge global style properties.
+            onBeforePlotLine: function (adj) {
+            }
+        });
+        if (data != null && data.length > 0) {
+            Common.RefreshGraphControl(st, data);
+        }
+        return st;
+    }
+
+    this.RefreshGraphControl = function (control, data) { //Uppercase conversion
+        //load json data
+        control.loadJSON(data);
+        //compute node positions and layout
+        control.compute();
+        //optional: make a translation of the tree
+        control.geom.translate(new $jit.Complex(-200, 0), "current");
+        //emulate a click on the root node.
+        control.onClick(control.root);
+
+        return control;
+    }
+
+    this.GraphCommand = function (control, nodeDataSource, nodeIndex, commandIndex) { //Uppercase conversion
+        try {
+            var command = nodeDataSource[nodeIndex].commands[commandIndex];
+            var actionKey = '';
+            if (!!command.ActionKeys) {
+                actionKey = $.map(command.ActionKeys, function (key, index) {
+                    return key.ParameterName + '=' + (!!nodeDataSource[nodeIndex].data[key.PropertyName] ? nodeDataSource[nodeIndex].data[key.PropertyName] : '');
+                }).join('&');
+            }
+            var actionUrl = Helper.AppendActionKey(command.ActionRoute, actionKey);
+            actionUrl = Helper.AppendCascadingQueryStringParameters(actionUrl);
+
+            if (command.JSFunction == null || command.JSFunction == '' || (command.JSFunction != '' && window[command.JSFunction](nodeDataSource[nodeIndex]))) {
+                if (command.TargetWindow == 2) {
+                    Common.OpenExtWindow(control.id + "ExtWindow", actionUrl, command.WindowDefinition);
+                } else if (command.TargetWindow == 0) {
+                    window.location = actionUrl;
+                } else if (command.TargetWindow == 1) {
+                    window.open(actionUrl, '_blank');
+                } else if (command.TargetWindow == 3) {
+                    window.open(actionUrl, '_top');
+                }
+            }
+        } catch (theException) {
+            throw theException;
+        }
+    }
+
+    this.HandleCreateBreakFunding = function (obj) {
+        if (obj != null) {
+            var cifNumber = obj.CounterpartyId;
+            var facilityNumber = obj.Credit_Application_Number;
+            var loanNumber = obj.Transaction_Number;
+            var facilityCifNumber = obj.CustomerCode;
+            var url = Application.ContextPath + "BreakFunding/CreateBreakFunding?cifNumber=" + cifNumber + "&facitilyNumber=" + facilityNumber + "&loanNumber=" + loanNumber + "&facilityCifNumber=" + facilityCifNumber;
+            //window.parent.location.href = url;
+            this.ReloadPage(url);
+        }
+    };
+
+    this.HandleCreateBreakFundingFromCustomer = function (obj) {
+        if (obj != null) {
+            var cifNumber = obj.CustomerCode;
+            var url = Application.ContextPath + "BreakFunding/CreateBreakFunding?cifNumber=" + cifNumber;
+            //window.parent.location.href = url;
+            this.ReloadPage(url);
+        }
+    };
+
+    this.ViewOVSStatusDetails = function (obj) {
+        if (obj != null) {
+            var workflowTransactionId = obj.WorkflowTransactionId
+            var url = Application.ContextPath + "Reports/GetOVSSubmissionList?workflowTransactionId=" + workflowTransactionId;
+            var windowDefinition = {};
+            windowDefinition.Title = "OVS Submission Status";
+            windowDefinition.Modal = true;
+            windowDefinition.Height = 300;
+            windowDefinition.Width = 1000;
+
+            var actionRoute = Helper.FormatString(url);
+            Common.OpenExtWindow("OVSSubmissionStatus", actionRoute, windowDefinition);
+        }
+    };
+    this.ViewTaskCleanupComment = function (workflowCancelType,obj ) {
+            var workflowTransactionId = obj.WorkflowTransactionId
+            var url = Application.ContextPath + "Admin/AddTaskCleanupConfirmation?workflowTransactionId=" + workflowTransactionId + "&workflowCancelType=" + workflowCancelType;
+            var windowDefinition = {};
+            windowDefinition.Title = workflowCancelType + " Confirmation";
+            windowDefinition.Modal = true;
+            windowDefinition.Height = 220;
+            windowDefinition.Width = 350;
+            var actionRoute = Helper.FormatString(url);
+            Common.OpenExtWindow("TaskCleanupComments", actionRoute, windowDefinition);
+    };
+
+
+
+    this.ViewBreakFundings = function (obj) {
+        if (obj != null) {
+            var cifNumber = obj.CounterpartyId.trim();
+            var facilityNumber = obj.Credit_Application_Number.trim();
+            var loanNumber = obj.Transaction_Number.trim();
+            var url = Application.ContextPath + "BreakFunding/GetBreakfundingsForLoan?CIFNumber=" + cifNumber + "&FacilityNumber=" + facilityNumber + "&LoanNumber=" + loanNumber;
+
+            var windowDefinition = {};
+            windowDefinition.Title = "Breakfunding(s) for loan " + loanNumber;
+            windowDefinition.Modal = true;
+            windowDefinition.Height = 300;
+            windowDefinition.Width = 1000;
+
+            var actionRoute = Helper.FormatString(url);
+            Common.OpenExtWindow("BreakfundingRegenerateInvoice", actionRoute, windowDefinition);
+        }
+    };
+
+    this.RegenerateBreakFundingInvoice = function (obj) {
+        $.invokeAjax({
+            type: 'GET',
+            url: obj.ActionRoute,
+            contentType: 'application/json; charset=utf-8',
+            success: function (result) {
+                if (result == 'Fail')
+                    Common.ShowAlertMessage(null, "Error occured during invoice regeneration");
+                else
+                    Common.ShowAlertMessage(null, "Invoice regeneration transaction created successfully", 'Invoice regeneration', null, "Common.RedirectToDashboard");
+            }
+        });
+    };
+
+    this.CreateRateResetFromLoan = function (obj) {
+        if (obj != null) {
+            var cifNumber = "";
+            var facilityNumber = "";
+            var loanNumber = "";
+            var customerName = "";
+            if (obj.CustomerCode != null)
+                cifNumber = obj.CustomerCode;
+            if (obj.Credit_Application_Number != null)
+                facilityNumber = obj.Credit_Application_Number;
+            if (obj.Transaction_Number != null)
+                loanNumber = obj.Transaction_Number;
+            if (obj.CustomerName != null)
+                customerName = obj.CustomerName;
+
+            var url = Helper.FormatString(Application.ContextPath + 'RollOver/RateResetLoan?cifNumber={0}&facilityNumber={1}&LoanNumber={2}&customerName={3}', cifNumber, facilityNumber, loanNumber, customerName);
+            //window.parent.location.href = url;
+            this.ReloadPage(url);
+        }
+    };
+
+
+    this.CreateRollOverRenewalFromLoan = function (obj) {
+        if (obj != null) {
+            var cifNumber = "";
+            var facilityNumber = "";
+            var loanNumber = "";
+            var customerName = "";
+
+            if (obj.CustomerCode != null) {
+                cifNumber = obj.CustomerCode;
+            }
+
+            if (obj.Credit_Application_Number != null) {
+                facilityNumber = obj.Credit_Application_Number;
+            }
+            if (obj.Transaction_Number != null) {
+                loanNumber = obj.Transaction_Number;
+            }
+
+            if (obj.CustomerName != null) {
+                customerName = obj.CustomerName;
+            }
+
+            var url = Helper.FormatString(Application.ContextPath + 'RollOver/RenewLoan?cifNumber={0}&facilityNumber={1}&LoanNumber={2}&CustomerName={3}', cifNumber, facilityNumber, loanNumber, customerName);
+            //window.parent.location.href = url;
+            this.ReloadPage(url);
+        }
+    };
+
+    this.CreateRollOverRenewal = function (obj) {
+        var FacilityId = obj.FacilityId;
+        var CustomerCode = obj.CustomerCode;
+        var CustomerName = obj.CustomerName;
+
+        var actionRoute = Helper.FormatString(Application.ContextPath + 'RollOver/RenewFacility?cifNumber={0}&facilityNumber={1}&customerName={2}', CustomerCode, FacilityId, CustomerName);
+        //window.parent.location.href = actionRoute;
+        this.ReloadPage(actionRoute);
+    }
+
+    this.CreateRollOverRenewal_adv = function (obj) {
+        var FacilityId = obj.FacilityId;
+        var CustomerCode = obj.CustomerCode;
+
+        var actionRoute = Helper.FormatString(Application.ContextPath + 'RollOver/RenewFacility?cifNumber={0}&facilityNumber={1}', CustomerCode, FacilityId);
+        //window.parent.location.href = actionRoute;
+        this.ReloadPage(actionRoute);
+    }
+
+    this.ViewCustomerDetails = function (obj) {
+        if (obj != null) {
+            var CustomerCode = obj.CustomerCode;
+
+            var actionRoute = Helper.FormatString(Application.ContextPath + 'Customer?CustomerId={0}', CustomerCode);
+            //window.parent.location.href = actionRoute;
+            this.ReloadPage(actionRoute);
+
+        }
+    };
+
+
+    this.ViewLoanDetails = function (obj) {
+        if (obj != null) {
+            var mainNumber = obj.Credit_Application_Number;
+            var subNumber = obj.Transaction_Number;
+            var url = Application.ContextPath + "Loan/LoanInputSheetOVSReadOnly?loanTransactionNumber=" + obj.Transaction_Number;
+            //window.location = url;
+            this.ReloadPage(url);
+        }
+    };
+    this.ViewFacilityDetails = function (obj) {
+        if (obj != null) {
+            var cifId = obj.CifId;
+            var applicationNumbers = obj.ApplicationNumber.split('-');
+            var mainNumber = applicationNumbers[0];
+            var subNumber = applicationNumbers[1];
+            var url = Application.ContextPath + "Facility/FacilityOVSReadOnly?customerCode=" + cifId + "&mainNumber=" + mainNumber + "&subNumber=" + subNumber;
+            //window.location = url;
+            this.ReloadPage(url);
+        }
+    };
+
+    this.ViewFacilityDetails_adv = function (obj) {
+        if (obj != null) {
+            var mainNumber = obj.MainNumber;
+            var subNumber = obj.SubNumber;
+            var url = Application.ContextPath + "Facility/FacilityOVSReadOnly?mainNumber=" + mainNumber + "&subNumber=" + subNumber;
+            //window.location = url;
+            this.ReloadPage(url);
+        }
+    };
+
+    this.CreateFacilityFromCustomer = function (obj) {
+        if (obj != null) {
+            var url = Helper.FormatString(Application.ContextPath + "Facility/CreateNewFacility?CustomerCode={0}&CustomerName={1}&responsibleCostCenterCode={2}&primaryAccountOfficerCode={3}", obj.CustomerCode, obj.CustomerName, obj.CostCenterCode, obj.PrimaryAccountOfficerEmployeeCode);
+            //window.location = url;
+            this.ReloadPage(url);
+        }
+    };
+
+    this.CreateFacilityFromCustomer_adv = function (obj) {
+        if (obj != null) {
+            var url = Helper.FormatString(Application.ContextPath + "Facility/CreateNewFacility?CustomerCode={0}&CustomerName={1}&responsibleCostCenterCode={2}", obj.CustomerCode, obj.CustomerName, obj.ResponsibleCostCenter);
+            //window.location = url;
+            this.ReloadPage(url);
+        }
+    };
+
+    this.CreateFacility = function (obj) {
+        if (obj != null) {
+            var url = Application.ContextPath + "Facility/CreateNewFacility";
+            //window.location = url;
+            this.ReloadPage(url);
+        }
+    };
+
+
+    this.CopyFacility = function (obj) {
+        if (obj != null) {
+            var transactionNumber = obj.ApplicationNumber;
+            var cifNumber = obj.CifId;
+            url = Application.ContextPath + 'Facility/Copy?FacilityId=' + cifNumber + "-" + transactionNumber;
+            if (transactionNumber != null) {
+                $.invokeAjax({
+                    type: 'GET',
+                    url: url,
+                    dataType: 'json',
+                    contentType: 'application/json; charset=utf-8',
+                    success: function (obj) {
+                        if (obj != undefined && obj.workflowTransactionId != null && obj.workflowTransactionId > 0) {
+                            window.parent.location.href = Application.ContextPath + 'Facility/FacilityDraftEntry?workflowTransactionId=' + obj.workflowTransactionId;
+                        }
+                    },
+                    error: function (jqXhr, textStatus, errorThrown) {
+                        //alert("Error '" + jqXhr.status + "' (textStatus: '" + textStatus + "', errorThrown: '" + errorThrown + "')");
+                    }
+                });
+            }
+        }
+    };
+
+    this.CopyFacility_adv = function (obj) {
+        if (obj != null) {
+            var objFacility = {};
+            objFacility.ApplicationNumber = obj.MainNumber + "-" + obj.SubNumber;
+            objFacility.CifId = obj.CustomerCode;
+            Common.CopyFacility(objFacility);
+            //var MainNumber = obj.MainNumber;
+            //var SubNumber = obj.SubNumber;
+            //var cifNumber = obj.CustomerCode;
+            //window.parent.location.href = Application.ContextPath + 'Facility/Copy?FacilityId=' + cifNumber + "-" + MainNumber + "-" + SubNumber;
+
+        }
+    };
+
+    this.CreateNewLoan = function (obj) {
+        //var CustomerId = obj.CustomerId;
+        //var actionRoute = Helper.FormatString(Application.ContextPath + 'Loan/CreateNewLoan?cifNumber={0}&FacilityId={1}&isFundingOnly=false', CustomerId, FacilityId);
+
+        var actionRoute = Helper.FormatString(Application.ContextPath + 'Loan/CreateNewLoan?cifNumber={0}&FacilityId={1}&isFundingOnly=false&CustomerName={2}&responsibleCostCenterCode={3}', obj.CustomerCode, obj.FacilityId, obj.CustomerName, obj.ResponsibleCostCenter);
+        //window.parent.location.href = actionRoute;
+        this.ReloadPage(actionRoute);
+    }
+
+    this.CreateNewLoan_adv = function (obj) {
+        var actionRoute = Helper.FormatString(Application.ContextPath + 'Loan/CreateNewLoan?cifNumber={0}&FacilityId={1}&isFundingOnly=false&CustomerName={2}&responsibleCostCenterCode={3}', obj.CustomerCode, obj.FacilityId, obj.CustomerName, obj.ResponsibleCostCenter);
+        //window.parent.location.href = actionRoute;
+        this.ReloadPage(actionRoute);
+    }
+
+    this.CreateNewLoanFromCustomer = function (obj) {
+        var cifNumber = (obj.CustomerCode != null) ? obj.CustomerCode : '';
+        var costCenterCode = (obj.CostCenterCode != null) ? obj.CostCenterCode : '';
+        var customerName = (obj.CustomerName != null) ? obj.CustomerName : '';
+
+        var actionRoute = Helper.FormatString(Application.ContextPath + 'Loan/CreateNewLoanFromCustomer?cifNumber={0}&CustomerName={1}&responsibleCostCenterCode={2}', cifNumber, customerName, costCenterCode);
+        //window.parent.location.href = actionRoute;
+        this.ReloadPage(actionRoute);
+    }
+
+    this.CopyLoan = function (obj) {
+        if (obj != null) {
+            var transactionNumber = obj.Transaction_Number;
+            if (transactionNumber != null && transactionNumber != '') {
+                var actionRoute = Application.ContextPath + 'Loan/CopyFrom?loanTransactionNumber=' + transactionNumber + '&responsibleCostCenterCode=' + obj.ResponsibleCostCenter;
+                //RTalla
+                if ($("#IncomingMessageId") != undefined && $("#IncomingMessageId").length > 0) {
+                    if ($("#CIFNumber") !== undefined && $("#CIFNumber")[0] !== undefined && $("#CIFNumber")[0].value !== obj.CounterpartyId) {
+                        Common.ShowAlertMessage('dvDialog', Messages.LoanLookUpSameBorrower_Message);
+                        return false;
+
+                    } else {
+                        Common.CloseExtWindow(Helper.GetWindowControl("FacilityLoansPopupWithParam"));
+
+                        $("#TemplateOrCopyloanId").text("Transaction Num");
+                        $("#IsTemplateOrCopyLoan").val("CopyLoan");
+
+                        $("#TemplateCopyLabel").show();
+                        $("#lblTemplateId").hide();
+                        $("#lblLoanTransactionNumber").show();
+
+                        $("#lblLoanTransactionNumber").text(transactionNumber);
+                        $("#LoanTransactionNumber").val(transactionNumber);
+                        $("#TransactionNumber").val(transactionNumber);
+                        $("#CostCenterCode").val(obj.ResponsibleCostCenter);
+                    }
+                } else {
+                    this.ReloadPage(actionRoute);
+                }
+            }
+        }
+    }
+
+
+    this.HandleTemplate = function (obj) {
+        var FacilityId = obj.FacilityId;
+        var CustomerId = obj.CustomerId;
+
+        var windowDefinition = {};
+        windowDefinition.Title = "Template Lookup";
+        windowDefinition.Modal = true;
+        windowDefinition.Height = 300;
+        windowDefinition.Width = 700;
+
+        var actionRoute = Helper.FormatString(Application.ContextPath + 'Loan/TemplateLookup?FacilityId={0}&CustomerId={1}&transactionNumber={2}&responsibleCostCenter={3}', FacilityId, CustomerId, obj.ApplicationNumber, obj.ResponsibleCostCenter);
+        Common.OpenExtWindow("LoanTemplatePopupWithParam", actionRoute, windowDefinition);
+    }
+
+    this.FacilityLoans = function (obj) {
+        var FacilityId = obj.FacilityId;
+        var CustomerId = obj.CustomerId;
+
+        var windowDefinition = {};
+        windowDefinition.Title = "Loan Lookup";
+        windowDefinition.Modal = true;
+        windowDefinition.Height = 320;
+        windowDefinition.Width = 1280;
+        //string applicationNumber, string CustomerCode, string CustomerName, string CostCenterCode
+        var actionRoute = Helper.FormatString(Application.ContextPath + 'Search/CustomerloanLookup?applicationNumber={0}&CustomerCode={1}&CustomerName={2}&CostCenterCode={3}', FacilityId, CustomerId, obj.CustomerName, obj.ResponsibleCostCenter);
+        Common.OpenExtWindow("FacilityLoansPopupWithParam", actionRoute, windowDefinition);
+    }
+
+    this.HandleTemplate_adv = function (obj) {
+        var FacilityId = obj.MainNumber + "-" + obj.SubNumber;
+        var CustomerId = obj.CustomerCode;
+        var ApplicationNumber = obj.MainNumber + "-" + obj.SubNumber;
+
+        var windowDefinition = {};
+        windowDefinition.Title = "Template Lookup";
+        windowDefinition.Modal = true;
+        windowDefinition.Height = 300;
+        windowDefinition.Width = 700;
+
+        var actionRoute = Helper.FormatString(Application.ContextPath + 'Loan/TemplateLookup?FacilityId={0}&CustomerId={1}&transactionNumber={2}&responsibleCostCenter={3}', FacilityId, CustomerId, ApplicationNumber, obj.ResponsibleCostCenter);
+        Common.OpenExtWindow("LoanTemplatePopupWithParam", actionRoute, windowDefinition);
+    }
+
+    this.CopyTemplateDetails = function (responsibleCostCenterCode, transactionNumber, obj) {
+        //function CopyTemplateDetails(, commandParameters, windowDefinition, control) {
+        if (obj != null) {
+            var templateId = obj.LoanDealTemplateID;
+            if (templateId != null && templateId != '') {
+                Common.CloseExtWindow(Helper.GetWindowControl("Extwindows"));
+                var actionRoute = Application.ContextPath + 'Loan/LoanTemplate?templateId=' + templateId + '&responsibleCostCenterCode=' + responsibleCostCenterCode + '&transactionNumber=' + transactionNumber;
+                //window.parent.location.href = actionRoute;
+
+                //RTalla
+                if ($("#IncomingMessageId") != undefined && $("#IncomingMessageId").length > 0) {
+                    $("#TemplateOrCopyloanId").text("Loan TemplateID");
+                    $("#IsTemplateOrCopyLoan").val("Template");
+                    $("#TemplateCopyLabel").show();
+                    $("#lblTemplateId").show();
+                    $("#lblLoanTransactionNumber").hide();
+                    $("#lblTemplateId").text(templateId);
+                    $("#TemplateId").val(templateId);
+                    $("#TransactionNumber").val(transactionNumber);
+                    $("#CostCenterCode").val(responsibleCostCenterCode);
+                }
+                else {
+                    this.ReloadPage(actionRoute);
+                }
+            }
+        }
+    }
+
+    this.CreateNewFundingRequest = function (obj) {
+        var cifNumber = (obj.CustomerCode != null) ? obj.CustomerCode : '';
+        var facilityId = (obj.FacilityId != null) ? obj.FacilityId : '';
+        var responsibleCostCenter = (obj.ResponsibleCostCenter != null) ? obj.ResponsibleCostCenter : '';
+        var customerName = (obj.CustomerName != null) ? obj.CustomerName : '';
+
+        var actionRoute = Helper.FormatString(Application.ContextPath + 'Loan/CreateNewFundingRequest?cifNumber={0}&facilityId={1}&customerName={2}&responsibleCostCenterCode={3}', cifNumber, facilityId, customerName, responsibleCostCenter);
+        //window.parent.location.href = actionRoute;
+        this.ReloadPage(actionRoute);
+    }
+
+
+    this.CreateNewFundingRequest_adv = function (obj) {
+        var cifNumber = (obj.CustomerCode != null) ? obj.CustomerCode : '';
+        var facilityId = (obj.FacilityId != null) ? obj.FacilityId : '';
+        var responsibleCostCenter = (obj.ResponsibleCostCenter != null) ? obj.ResponsibleCostCenter : '';
+        var customerName = (obj.CustomerName != null) ? obj.CustomerName : '';
+        var actionRoute = Helper.FormatString(Application.ContextPath + 'Loan/CreateNewFundingRequest?cifNumber={0}&facilityId={1}&customerName={2}&responsibleCostCenterCode={3}', cifNumber, facilityId, customerName, responsibleCostCenter);
+        //window.parent.location.href = actionRoute;
+        this.ReloadPage(actionRoute);
+    }
+
+    this.HandleCascadingListChange = function (parentControl, childControl, childControlDataSource) { //Uppercase conversion
+        var selectedValue = parentControl.value();
+
+        if (selectedValue != null && selectedValue != '') {
+            var childControlValue = childControl.value();
+            var childControlText = childControl.text();
+            childControlDataSource.filter({
+                field: 'Filter',
+                operator: 'eq',
+                value: selectedValue
+            });
+            if (childControlValue != null && childControlValue != '')
+                childControl.value(childControlValue);
+            //if (childControlText != null && childControlText != '')
+            //childControl.text(childControlText);
+        } else {
+            childControlDataSource.filter(null);
+        }
+        /*
+        if(selectedValue != null && selectedValue != '')
+            childControl.enable();
+        else
+            childControl.enable(false);
+            */
+        //childControl.select(0);
+    }
+
+
+    this.ValidateNumber = function (evt) {
+
+        var theEvent = evt || window.event;
+        var key = theEvent.keyCode || theEvent.which;
+        key = String.fromCharCode(key);
+        var regex = /[0-9]|\./;
+        if (!regex.test(key)) {
+            theEvent.returnValue = false;
+            if (theEvent.preventDefault) theEvent.preventDefault();
+        }
+    };
+
+    this.LoadAjaxRegion = function (divControl, url, isControl, data, successFunc, failureFunc) { //Uppercase conversion
+        if (!!data) {
+            url = Helper.AppendActionKey(url, $.param(data));
+        }
+        if (!isControl) {
+            divControl = $('#' + divControl);
+        }
+
+        url = Helper.AppendCascadingQueryStringParameters(url);
+
+        divControl.load(url, function (responseText, textStatus, XMLHttpRequest) {
+
+            if (textStatus == 'success') {
+                Common.InitLayout(divControl, true);
+                if (!!successFunc)
+                    successFunc();
+            } else {
+                if (!!failureFunc)
+                    failureFunc(responseText);
+            }
+        });
+    }
+
+    this.DisplayFormErrors = function (form, messages) {
+        $.each(messages, function (index, record) {
+            if (index == '') {
+                var lst = record.split('|');
+                $.each(lst, function (i, rec) {
+
+                    $(form).find(".validation-summary-errors").append("<li class='errs'>" + rec + "</li>");
+                });
+                //Form level errors
+                delete messages[index]; //Delete that record so that the below showErrors can exlude it
+            }
+
+        });
+
+        $.each(messages, function (index, record) {
+            var controlId = "Ext_" + index;
+
+            //replace | with line break.
+            record = record.replace('|', '<br>');
+
+            var control = $(form).find("[data-Extmsg-for='" + controlId + "']");
+
+            if (control.length) {
+
+                var replace = $.parseJSON(control.attr("data-Extmsg-replace")) !== false;
+
+                control.removeClass("check-valid").addClass("check-error");
+
+                if (replace) //replace only of default message is not set
+                    control.attr("title", record);
+            }
+
+        });
+
+    }
+
+    this.ClearTabErrors = function () {
+        //SS 01/12/2015: Clearing the Tab errors
+        var tabStripsList = $('.k-tabstrip-items.k-reset li');
+        if (tabStripsList.length > 0 && !Helper.IsNullOrEmpty(tabStripsList[0].getAttribute("aria-controls"))) {
+
+            tabStripsList.removeClass(' tabstrip-errors  '); //SS 01/12/2015: Removing the Tab highlight
+
+            ////SS 01/12/2015: Removing the GridErrorSummary inside each tab
+            var tabId = tabStripsList[0].getAttribute("aria-controls").replace("-1", "");
+            var tabStrip = Helper.GetTabStripControl(tabId);
+            if (tabStrip != null && tabStrip.contentElements.length > 0) {
+                $.each(tabStrip.contentElements, function () {
+                    $(this).find('.validation-summary-errors').html('');
+
+                });
+            }
+        }
+    };
+
+    this.ClearFormErrors = function (form) {
+        $(form).find(".validation-summary-errors").html('');
+        $(form).find(".check-error").removeClass("check-error").addClass("check-valid");
+        $(form).find(".check-error").attr("title", "");
+        $(form).find(".k-validation-error-kendo-controls").removeClass("k-validation-error-kendo-controls");
+    };
+
+    this.ClearAllErrors = function (form) {
+        Common.ClearFormErrors(form);
+        Common.ClearExceptionDisplay();
+        Common.ClearTabErrors();
+    };
+
+    this.ShowAlertMessage = function (divId, message, title, isConfirmation, callBackFunction, width, top, left) {
+        var windObj = new WindowDefination();
+        windObj.message = message;
+        if (title != null) {
+            windObj.title = title;
+        }
+        if (isConfirmation != null) {
+            windObj.isConfirmation = isConfirmation;
+        }
+        if (callBackFunction != null) {
+            windObj.callBackFunction = callBackFunction;
+        }
+        if (width != null) {
+            windObj.width = width;
+        }
+        if (top != null) {
+            windObj.top = top;
+        }
+        if (left != null) {
+            windObj.left = left;
+        }
+        windObj.showDialog(divId);
+    }
+
+
+    this.WorkflowComment = function (workflowTransactionId, workflowTaskId, EditMode, command, commandParameters, windowDefinition, control) {
+        if (control != null) {
+            var pageWlkTrxnCtl = $("input[name='WorkflowTransactionId']");
+
+            var pageWlkTrxnId = '';
+            if (pageWlkTrxnCtl != null || pageWlkTrxnCtl.length > 0) {
+                var pageWlkTrxnId = pageWlkTrxnCtl.val();
+                if (pageWlkTrxnId != '' && pageWlkTrxnId != null)
+                    workflowTransactionId = pageWlkTrxnId;
+            }
+        }
+        var url = Application.ContextPath + 'WorkflowComment/GetCommentDetails?workflowTransactionId={0}&workflowtaskid={1}&editMode={2}';
+        Common.OpenExtWindow("WorkflowCommentWindow", Helper.FormatString(url, workflowTransactionId, workflowTaskId, EditMode), { Title: 'Workflow Comment', Height: 300, Width: 700, Modal: true });
+        //TO DO cahnge the text to come from resource file.
+    }
+
+    this.saveWorkflowComment = function () {
+        var WorkflowComment = $("#WorkflowComment").val();
+        if (WorkflowComment == null || WorkflowComment == '') {
+            //if (commonMessages.WorkflowCommentMissing_Message != null || commonMessages.WorkflowCommentMissing_Message != '') this.ShowAlertMessage(null, commonMessage.WorkflowCommentMissing_Message);
+            //else  {
+            //    this.ShowAlertMessage(null, commonMessages.WorkflowCommentMissing_Message, 'Loan App - error', true, null, null, null, null);
+            //}
+            //SS Refactor: This code should be refactor and we shoudl check based on messages.
+            if (msgWorkflowCommentMissing != null || msgWorkflowCommentMissing != '') this.ShowAlertMessage(null, msgWorkflowCommentMissing);
+            else this.ShowAlertMessage(null, 'Please add comment');
+
+            return false;
+        }
+        var WorkflowtransactionId = $("#WorkflowTransactionId").val();
+        var WorkflowTaskId = $("#WorkflowTaskId").val();
+        var url = Application.ContextPath + "WorkflowComment/SaveCommentDetails?WorkflowComment=" + encodeURIComponent(WorkflowComment) + "&workflowTransactionId=" + WorkflowtransactionId + "&workflowTaskId=" + WorkflowTaskId;
+        $.invokeAjax({
+            type: 'GET',
+            url: url,
+            dataType: 'text',
+            contentType: 'application/json; charset=utf-8',
+            success: function (result, status, jqXhr) {
+                // If the comment notification is not set already.
+                if ($(".iicon-red-commentNotification").length == 0) {                    
+                    Common.SetCommentNotification();
+                }
+
+                if (jqXhr.getResponseHeader('content-type').indexOf('text/html') >= 0) {
+                    $('#divComment').html(result);
+                    $("#WorkflowComment").val("");
+                }
+            },
+            error: function (jqXhr, textStatus, errorThrown) {
+                alert("Error '" + jqXhr.status + "' (textStatus: '" + textStatus + "', errorThrown: '" + errorThrown + "')");
+            }
+        });
+    }
+
+
+    this.saveTaskCleanupConfirmation = function () {
+        var workflowComment = $("#TaskCleanupWorkflowComment").val();
+        if (workflowComment == null || workflowComment === "") {
+            this.ShowAlertMessage(null,CommonMessages.TaskCleanupComment_Alert_Message,null,null,null,320,null,null);
+            return false;
+        }
+        var workflowtransactionId = $("#WorkflowTransactionId").val();
+        var workflowTaskId = $("#TaskTypeId").val();
+        var url = Application.ContextPath + "Admin/SaveTaskCleanupComments?WorkflowComment=" + workflowComment + "&workflowTransactionId=" + workflowtransactionId + "&taskStatusType=" + workflowTaskId;
+        $.invokeAjax({
+            type: 'GET',
+            url: url,
+            dataType: 'text',
+            contentType: 'application/json; charset=utf-8',
+            success: function (data) {
+                data = JSON.parse(data);
+                if (!data.HasError) {
+                    //call refresh grid
+                    refreshTaskCleanupGrid();
+                    setTimeout(function () { //kendo bug, does not work without it
+                        kendo.ui.progress($("#appcontainer"), true);
+                    }, 50);
+                    Common.ShowAlertMessage(null, data.SuccessMessage, null, null, null, null, null, null);
+                    
+                } else {
+                    Common.ShowAlertMessage(null, data.SuccessMessage, null, null, null, null, null, null);
+                }
+                Common.CloseExtWindow();
+            },
+            error: function (jqXhr, textStatus, errorThrown) {
+            }
+        });
+    }
+
+    function refreshTaskCleanupGrid() {
+        var reportSearchCriteria = JSON.stringify({ 'reportSearchCriteria': GetReportSearchModel('audit') });            
+        $.invokeAjax({
+            url: Application.ContextPath + "Reports/ReportSearch?reportType=" + reportType,
+            type: "Post",
+            data: reportSearchCriteria,
+            contentType: 'application/json; charset=utf-8',
+            dataType: "json",
+            success: function (data) {
+                if (data) {
+                    $("#gridTaskcleanupReport").data("kendoGrid").dataSource.data(data);
+                    $("#gridTaskcleanupReport").data("kendoGrid").dataSource.page(1);
+                    //if (data.length <= 0) {
+                    //    Common.ShowAlertMessage(null, 'No records found. Please modify your search criteria and try again.', 'Reports Search', false, null, null, null, null);
+                    //    return false;
+                    //}
+                }
+            }
+        });
+        
+    }
+
+    this.HandleSearchEnterKey = function (event) {
+        
+        if ($('#ddlSearch').val() == 'customer_name') {
+            $('#txtSearch').attr('maxlength', 69);
+
+        }
+
+        if ($('#ddlSearch').val() == 'customer_id') {
+            $('#txtSearch').attr('maxlength', 7);
+        }
+
+        if (event.keyCode == 13) {
+            this.HandleSearch();
+            event.cancelBubble = true;
+            event.returnValue = false;
+        }
+    }
+    this.HandleSearch = function () {
+
+
+        if ($('#ddlSearch').val() == "") {
+            Common.ShowAlertMessage(null, CommonMessages.CommonSearchCriteriaErr_Message, 'Loan App - error', false, null, null, null, null);
+            return false;
+        }
+
+        if ($.trim($('#txtSearch').val()).length == 0) {
+            Common.ShowAlertMessage(null, CommonMessages.CommonSearchValueErr_Message, 'Loan App - error', false, null, null, null, null);
+            return false;
+        }
+
+        if (window.location.href.search(Application.ReportServer) != -1) {
+            url = Common.ReloadPage(Application.BaseURL + "Search/SearchCustomer?searchCriteria=" + $('#ddlSearch').val() + "&searchValue=" + $('#txtSearch').val());
+        } else {
+            Common.ReloadPage(Application.ContextPath + "Search/SearchCustomer?searchCriteria=" + $('#ddlSearch').val() + "&searchValue=" + $('#txtSearch').val());
+        }
+    }
+
+
+    this.SetSearchCriteria = function () {
+        var searchCriteria = Helper.GetQueryStringParameter("searchCriteria");
+        var searchValue = Helper.GetQueryStringParameter("searchValue");
+
+        if (searchCriteria != null && searchCriteria != '') {
+            dropdownlist = $("#ddlSearch").data("kendoDropDownList");
+            dropdownlist.select(function (dataItem) {
+                return dataItem.value === searchCriteria;
+            });
+            $('#ddlSearch').val(searchCriteria);
+            if (searchCriteria == 'customer_id') {
+                $('#txtSearch').attr('maxlength', 7);
+            }
+            if (searchCriteria == 'customer_name') {
+                $('#txtSearch').attr('maxlength', 69);
+            }
+        }
+
+        if (searchValue != null && searchValue != '') {
+            $('#txtSearch').val(searchValue)
+        }
+
+    }
+
+
+    this.HandleFacilitySearch = function () {
+        var CreditApplicationNumber = $('#Facility_CreditApplicationNumber').val();
+        var DrawableFromDate = $('#Facility_DrawableFromDate').val();
+        var DrawableToDate = $('#Facility_DrawableToDate').val();
+        var MaturityDate = $('#Facility_MaturityDate').val();
+
+        var dataobj = {};
+        dataobj.Facility_CreditApplicationNumber = CreditApplicationNumber;
+        dataobj.Facility_DrawableFromDate = DrawableFromDate;
+        dataobj.Facility_DrawableToDate = DrawableToDate;
+        dataobj.Facility_MaturityDate = MaturityDate;
+
+        $.invokeAjax({
+            type: "GET",
+            url: Application.ContextPath + "Search/SearchFacility",
+            data: dataobj,
+            contentType: "application/json; charset=utf-8",
+            dataType: 'html',
+            success: function (result, status, jqXhr) {
+                if (jqXhr.getResponseHeader('content-type').indexOf('text/html') >= 0) {
+                    $("#page-includes").html(result);
+                    $("#dvActionBar").hide();
+                    $("#dvException").hide();
+
+                }
+            },
+            error: function (jqXhr, textStatus, errorThrown) {
+                alert("Error '" + jqXhr.status + "' (textStatus: '" + textStatus + "', errorThrown: '" + errorThrown + "')");
+            }
+        });
+    }
+
+    this.HandleLoanSearch = function () {
+
+        var DDCAAccountNumber = $('#Loan_DDCAAccountNumber').val();
+        var LoanTransactionNumber = $('#Loan_TransactionNumber').val();
+        var CreditApplicationNumber = $('#Loan_CreditApplicationNumber').val();
+        var ValueDate = $('#Loan_ValueDate').val();
+        var MaturityDate = $('#Loan_MaturityDate').val();
+        var NextRateMaturityDate = $('#Loan_NextRateMaturityDate').val();
+        var RateResetDate = $('#Loan_RateResetDate').val();
+
+
+
+        var dataobj = {};
+        dataobj.Loan_DDCAAccountNumber = DDCAAccountNumber;
+        dataobj.Loan_TransactionNumber = LoanTransactionNumber;
+        dataobj.Loan_CreditApplicationNumber = CreditApplicationNumber;
+        dataobj.Loan_ValueDate = ValueDate;
+        dataobj.Loan_MaturityDate = MaturityDate;
+        dataobj.Loan_NextRateMaturityDate = NextRateMaturityDate;
+        dataobj.Loan_RateResetDate = RateResetDate;
+
+        $.invokeAjax({
+            type: "GET",
+            url: Application.ContextPath + "Search/SearchLoan",
+            data: dataobj,
+            dataType: 'html',
+            contentType: "application/json; charset=utf-8",
+            success: function (result, status, jqXhr) {
+                if (jqXhr.getResponseHeader('content-type').indexOf('text/html') >= 0) {
+                    $("#page-includes").html(result);
+                    $("#dvActionBar").hide();
+                    $("#dvException").hide();
+                }
+
+
+            },
+            error: function (jqXhr, textStatus, errorThrown) {
+
+                alert("Error '" + jqXhr.status + "' (textStatus: '" + textStatus + "', errorThrown: '" + errorThrown + "')");
+            }
+        });
+
+    }
+
+    // SS 08/08/2014: This function allow only numeric with decimal in textbox
+    this.AllowNumericWithDecimal = function (event, obj) {
+        var minVal = $(obj).attr('data-val-range-min');
+        var negativeOK = minVal && parseFloat(minVal) < 0;
+
+        if ((event.which != 46 || $(obj).val().indexOf('.') != -1) && (!negativeOK || event.which != 45 || $(obj).val().indexOf('-') != -1) && (event.which < 48 || event.which > 57)) {
+            event.preventDefault();
+        }
+    }
+
+    // SS 08/08/2014: This function allow only numeric in textbox
+    this.AllowNumeric = function (event, obj) {
+        $(obj).val($(obj).val().replace(/[^\d].+/, ""));
+        if ((event.which < 48 || event.which > 57)) {
+            event.preventDefault();
+        }
+    }
+
+    this.BindMultiselect = function (listVal, ctrl) {
+        var multCtrl = Helper.GetMultiSelectControl(ctrl);
+        if (listVal != "" && listVal.length > 0) {
+            multCtrl.value(listVal);
+        }
+    }
+
+    this.PostPrevalidateFunction = function (obj) {
+        if ($('#FacilityInstructionViewModel_OverrideDirtyData')[0]) {
+            $('#FacilityInstructionViewModel_OverrideDirtyData').val(false);
+        }
+        if (obj.Processed != undefined && obj.Processed == "SaveError" || obj.Processed == "DataError") {
+            Common.ShowAlertMessage("dvError", obj.SuccessMessage, null, null, null);
+        }
+        else if (obj.Processed != undefined && obj.Processed == "DirtyDataError") {
+            Common.ShowAlertMessage(null, obj.SuccessMessage, 'Validate', true, 'confirmValidateCallback()', null, null, null);
+        } else if (obj.Processed != undefined && obj.Processed == "DataValidationError") {
+            if (obj.UrlEnd && obj.UrlEnd != "")
+                //window.location.href = Application.ContextPath + obj.UrlEnd;
+                Common.ReloadPage(Application.ContextPath + obj.UrlEnd);
+            else
+                Common.ReloadPage();
+        } else if (obj.Processed != undefined && obj.Processed == "ServiceError") {
+            Common.ReloadPage();
+        } else {
+            Common.ShowAlertMessage("dvError", CommonMessages.CommonPreValidationSuccess_Message, 'Loan App', null, "Common.ReloadPage");
+        }
+        return;
+    }
+
+    this.PostResubmitAllTasks = function (obj) {
+        if (obj.Message == "Success") {
+            Common.ShowAlertMessage('dvDialog', "Resubmitted all tasks succesfully", "System error tasks", false, "Common.ReloadPage", null, null, null);
+        } else {
+            Common.ShowAlertMessage('dvDialog', "Error while resubmitting all tasks", "System error tasks", false, null, null, null, null);
+        }
+
+        return;
+    }
+    this.RedirectFromBranchCodeDetails = function (obj) {
+        if (!obj.BranchCodeDetails.RedirectUrl)
+            window.location = Application.ContextPath;
+        else
+            window.location = obj.BranchCodeDetails.RedirectUrl;
+    }
+
+    this.SetBranchCodeDetailsText = function () {
+        $('#BranchCodeDetails_BookingBranchText').val($("#BranchCodeDetails_BookingBranchCode option:selected").text());
+        $('#BranchCodeDetails_OperatingBranchText').val($("#BranchCodeDetails_OperatingBranchCode option:selected").text());
+        //$('#BelongingBranchText').val($("#BelongingBranchCode option:selected").text());
+    }
+
+    this.EditBranchCodeDetails = function (command, commandParameters, windowDefinition, actionButton) {
+        Common.OpenExtWindow(actionButton.id + "ExtWindow", command.ActionRoute, command.WindowDefinition);
+    }
+
+    this.ChangeUserApplication = function (command, commandParameters, windowDefinition, actionButton) {
+        Common.OpenExtWindow(actionButton.id + "ExtWindow", command.ActionRoute, command.WindowDefinition);
+    }
+
+    this.OnUserApplicationChange = function () {
+        var application = Helper.GetDropDownListValue("SelectedApplication");
+        if (application === "1") {
+            //$("#BranchCodeDetails_BookingBranchCode").prop("disabled", true);
+           
+            Common.disablebranchDetails();
+            
+        }
+        else {
+            
+            Helper.GetDropDownListControl("#BranchCodeDetails_BookingBranchCode").enable(true);
+            Helper.GetDropDownListControl("#BranchCodeDetails_OperatingBranchCode").enable(true);
+            //$("#BranchCodeDetails_BookingBranchCode").prop("disabled", false);
+        }
+    }
+    this.SCFdisablebranchDetails = function () {
+        var application = Helper.GetDropDownListValue("SelectedApplication");
+        if (application === "1") {
+            Common.disablebranchDetails();
+        }
+    }
+    this.disablebranchDetails = function () {
+        var bookingbranch = Helper.GetDropDownListControl("#BranchCodeDetails_BookingBranchCode");//.val("3110");
+        bookingbranch.value("3110");
+        var operationBranch = Helper.GetDropDownListControl("#BranchCodeDetails_OperatingBranchCode");//.val("6139");
+        operationBranch.value("6139");
+        $("#BranchCodeDetails.BookingBranchText").value = "3110 - NEW YORK";
+        $("#BranchCodeDetails.OperatingBranchText").value = "6139 - OPERATION HUB"; 
+        Helper.GetDropDownListControl("#BranchCodeDetails_BookingBranchCode").readonly(true);
+        Helper.GetDropDownListControl("#BranchCodeDetails_OperatingBranchCode").readonly(true);
+    }
+
+    this.UpdateBranchCodeDetails = function (obj) {
+        Common.UpdateBranchDetailsheader(obj);
+        //$('#lblBelongingBranchText')[0].innerHTML = obj.BranchCodeDetails.BelongingBranchText;
+        if (obj.RefreshPage)
+        {
+            Common.ReloadApplicationafterUserProfileSelection(obj);
+        }
+        Common.CloseExtWindow($('#cmdSaveBranchDetails')[0]);
+    }
+    this.ReloadApplicationafterUserProfileSelection = function (obj) {
+        //this.SetBranchCodeDetailsText();
+        $("label[for=userContext_SelectedUserApplication]").html(obj.UserApplication.SelectedUserApplication);
+        var pathExt = "";
+        var searcExt = "ReloadSearch";
+        if (obj.UserDepartment === "FO")
+            pathExt = "FrontOfficeTask";
+        else if (obj.UserDepartment === "MO")
+            pathExt = "MiddleOfficeTask";
+        else if (obj.UserDepartment === "BO")
+            pathExt = "BackOfficeTask";
+
+        var dashboardUrl = Application.ContextPath + pathExt;
+        if (obj.HideCustomerSeach) {
+             $('.search').hide();
+        }
+        else {
+            $('.search').show();
+        }
+        if (!obj.RefreshPage) {
+            Common.UpdateBranchDetailsheader(obj);
+             Common.CloseExtWindow($("#cmdSaveUserDetails")[0]);
+                 return;
+             }
+        Common.ReloadPage(Application.ContextPath);
+        Common.CloseExtWindow($("#cmdSaveUserDetails")[0]);
+    }
+    this.UpdateBranchDetailsheader = function(obj)
+    {
+         $('#lblBookingBranchText')[0].innerHTML = obj.BranchCodeDetails.BookingBranchText;
+        $('#lblOperatingBranchText')[0].innerHTML = obj.BranchCodeDetails.OperatingBranchText;
+
+        if ($("#headerBookingBranchText").length > 0)
+            $('#headerBookingBranchText').text(obj.BranchCodeDetails.BookingBranchText);
+    }
+
+    this.UpdateUserDetails = function (obj) {
+        $("label[for=userContext_SelectedUserApplication]").html = obj.UserApplication.SelectedUserApplication;
+        Common.CloseExtWindow($('#cmdSaveUserDetails')[0]);
+    }
+   
+
+    /* SS 10/03/2014. This will pre load all the tabs. Which will be used for validation*/
+    this.PreLoadAllTabs = function (controlId) {
+        setTimeout(function () {
+            var tabStrip = Helper.GetTabStripControl(controlId);
+            if (tabStrip != null) {
+                for (var i = 2; i < tabStrip.dataSource.total() ; i++) {
+                    var nthItem = $('#' + controlId + ' .k-item:nth-child(' + i + ')');
+                    tabStrip.reload(nthItem);
+                }
+                if (tabStrip.dataSource.total() > 1) { //SS: If there is only 1 tab then it is already loaded.
+                    var lastTab = $('#' + controlId + ' .k-item:last');
+                    tabStrip.reload(lastTab);
+                }
+            }
+        }, 1000);
+    }
+
+    this.ViewIncomingmMessage = function (incomingmessageactivityid) {
+        var url = Application.ContextPath + "IncomingMessage/ViewIncomingMessage";
+        url = url + "?IncomingMessageId=" + incomingmessageactivityid;
+        Common.OpenExtWindow("IncomingMessage", url, { Title: "Incoming Message", Modal: false, Width: 700, Height: 360 });
+        //window.open(url, "Incoming Message");
+        return false;
+    }
+
+    this.ToggleHelpIcon = function () {
+    }
+
+    this.ConvertToNumber = function (amount) {
+        if (amount == "" || amount == null) { return 0; }
+        var numericAmount = amount.replace(/[^0-9\.]/g, '');
+        return numericAmount;
+    }
+
+    this.RedirectToDashboard = function () {
+        //window.location = Application.ContextPath;
+        Application.ShowProgressForReload = true;
+        Common.ReloadPage(Application.ContextPath);
+
+    };
+
+    this.ReloadPage = function (url) {
+        if (url == null || typeof (url) == 'undefined') {
+            kendo.ui.progress($("#appcontainer"), true);
+            //window.location.href = window.location.href;
+            url = window.location.href
+            var activeTab = $('.k-tabstrip-items.k-reset li[aria-selected="true"]');
+            var activeTabId = '';
+            if (activeTab.length > 0) {
+                var activeTabId = $(activeTab).attr("aria-controls")
+                if (activeTabId != null && activeTabId.length > 0)
+                    var targetKeyvalue = "activetab=" + activeTabId;
+                if (url.indexOf('activetab') > 0) {
+                    url = url.substr(0, url.indexOf('activetab') - 1)
+                }
+                url = Helper.AppendActionKey(url, targetKeyvalue);
+            }
+            window.location.href = url;
+        }
+        else {
+            if (Application.ShowProgressForReload) {
+                kendo.ui.progress($("#appcontainer"), true);
+            }
+            window.location.href = url;
+        }
+    };
+
+    this.RefreshTabs = function (tabName) {
+        var tabStrip = Helper.GetTabStripControl(tabName);
+        var tabs = tabStrip.items();
+        setTimeout(function () { //kendo bug, does not work without it
+            kendo.ui.progress($("#appcontainer"), true);
+            for (var i = 0; i < tabs.length; i++) {
+                if ($(tabStrip.contentElements[i]).find('.k-grid').length > 0) {
+                    TabLoadedCount[tabName] -= 1;
+                    tabStrip.reload(tabs[i]);
+                }
+            }
+        }, 100);
+
+    }   
+
+    this.setControlForPostback = function (controlId, value, formatedValue) {
+        var inputControl = $("input#" + controlId);
+        var spanControl = $("span#" + controlId);
+        if (spanControl.length > 0 && inputControl.length > 0
+        ) {
+
+            inputControl.val(value);
+            if (formatedValue != null) {
+                spanControl.text(formatedValue);
+            } else {
+                spanControl.text(value);
+            }
+
+        }
+    };
+
+
+    this.PostSubmitRateReset = function (obj) {
+        if (obj.Processed != undefined && obj.Processed == "SaveError" || obj.Processed == "DataError") {
+            Common.ShowAlertMessage("dvError", obj.SuccessMessage, null, null, null);
+        } else if (obj.Processed != undefined && obj.Processed == "DataValidationError") {
+            if (obj.UrlEnd && obj.UrlEnd != "")
+                //window.location.href = Application.ContextPath + obj.UrlEnd;
+                Common.ReloadPage(Application.ContextPath + obj.UrlEnd);
+            else
+                Common.ReloadPage();
+        } else if (obj.Processed != undefined && obj.Processed == "ServiceError") {
+            if (!Helper.IsNullOrEmpty(obj.SuccessMessage)) { Common.ShowAlertMessage("dvError", obj.SuccessMessage, null, null, "Common.ReloadPage"); }
+            else
+                Common.ReloadPage();
+        } else {
+            Common.ShowAlertMessage("dvError", obj.SuccessMessage, null, null, "Common.RedirectToDashboard");
+        }
+        return;
+    };
+
+    this.PostRequestSubmitFCLoan = function (obj) {
+       
+        if (obj.IsSave) {
+            Common.ShowAlertMessage("dvError", obj.SuccessMessage, null, null, null);
+        }
+        else {
+            if (obj.Processed == "SaveError" || obj.Processed == "DataError" || obj.Processed == "ServiceError") {
+                Common.ShowAlertMessage("dvError", obj.SuccessMessage, null, null, null);
+            }
+            else {
+                if (obj.SuccessMessage)
+                    Common.ShowAlertMessage("dvError", obj.SuccessMessage, null, null, "Common.RedirectToDashboard");
+            }
+        }
+        // Save 1. Save fail, Save Success
+        //Submit, Reject, Approve, Cancel  , 1. Success->Redirect to dashboard , Fail display message and keep on the same page       
+        return;
+    }
+
+
+    PostSubmitFCLoanAction = function (dataItem, commandParameters, windowDefinition, actionButton) {
+        var workflowTransactionId = 0;
+        var taskId = 0;
+
+        if (dataItem != null) {
+            $.each(dataItem.ActionKeys, function (key, value) {
+                if (value.ParameterName == "WorkflowTransactionId") {
+                    workflowTransactionId = value.PropertyName;
+                } else if (value.ParameterName == "TaskId") {
+                    taskId = value.PropertyName;
+                }
+            });
+        }
+
+        var notes = encodeURIComponent($('#Notes').html());
+        var url = dataItem.ActionRoute + "?WorkflowTransactionId=" + workflowTransactionId + "&TaskId=" + taskId + "&notes=" + notes;;
+      
+        $.invokeAjax({
+            url: url,
+            type: "Post",
+            dataType: "json",
+
+            success: function (data) {
+                Common.PostRequestSubmitFCLoan(data);
+            },
+            error: function (result, status, xhr) {
+                Common.ShowAlertMessage('dvDialog', status);
+
+            },
+            complete: function () {
+            }
+        });
+    }
+
+    //loan,Renewal
+    this.PostRequestSubmit = function (obj) {
+
+        if (obj.Processed != undefined && obj.Processed == "SaveError" || obj.Processed == "DataError") {
+            Common.ShowAlertMessage("dvError", obj.SuccessMessage, null, null, null);
+        } else if (obj.Processed != undefined && obj.Processed == "DataValidationError") {
+            if (obj.UrlEnd && obj.UrlEnd != "") {
+                // window.location.href = Application.ContextPath + obj.UrlEnd;
+                Common.ReloadPage(Application.ContextPath + obj.UrlEnd);
+            }
+            else {
+                Common.ReloadPage();
+            }
+        } else if (obj.Processed != undefined && obj.Processed == "ServiceError") {
+            if (!Helper.IsNullOrEmpty(obj.SuccessMessage)) { Common.ShowAlertMessage("dvError", obj.SuccessMessage, null, null, "Common.ReloadPage"); }
+            else {
+                Common.ReloadPage();
+            }
+        } else {
+            Common.ShowAlertMessage("dvError", obj.SuccessMessage, null, null, "Common.RedirectToDashboard");
+        }
+        return;
+    };
+    this.PostFirmIndicationRequstRollover = function (obj) {
+      
+    if (obj.Processed != undefined && obj.Processed == "SaveError" || obj.Processed == "DataError") {
+            Common.ShowAlertMessage("dvError", obj.SuccessMessage, null, null, "Common.ReloadPage");
+        } else if (obj.Processed != undefined && obj.Processed == "DataValidationError") {
+            if (obj.IsErrorSoftWarning) {
+                Common.ShowAlertMessage("dvError",
+                    obj.SuccessMessage,
+                    null,
+                    null,
+                    "Common.ReloadPage('" + Application.ContextPath + obj.UrlEnd + "')");
+            } else if (obj.UrlEnd && obj.UrlEnd != "")
+            // window.location.href = Application.ContextPath + obj.UrlEnd;
+                Common.ReloadPage(Application.ContextPath + obj.UrlEnd);
+            else
+                Common.ReloadPage();
+        } else {
+            if (!Helper.IsNullOrEmpty(obj.SuccessMessage))
+                Common.ShowAlertMessage("dvError", obj.SuccessMessage, null, null);
+
+            Common.RefreshTabs("RateResetTabStrip");
+        }
+        return;
+
+    };
+    this.PostFirmIndicationRequst = function (obj) {
+        if (obj.Processed != undefined && obj.Processed == "SaveError" || obj.Processed == "DataError") {
+            Common.ShowAlertMessage("dvError", obj.SuccessMessage, null, null, "Common.ReloadPage");
+        } else if (obj.Processed != undefined && obj.Processed == "DataValidationError") {
+            if (obj.IsErrorSoftWarning) {
+                Common.ShowAlertMessage("dvError", obj.SuccessMessage, null, null,
+                    "Common.ReloadPage('" + Application.ContextPath + obj.UrlEnd + "')");
+            }
+            else if (obj.UrlEnd && obj.UrlEnd != "")
+                // window.location.href = Application.ContextPath + obj.UrlEnd;
+                Common.ReloadPage(Application.ContextPath + obj.UrlEnd);
+            else
+                Common.ReloadPage();
+        } else {
+            if (!Helper.IsNullOrEmpty(obj.SuccessMessage))
+                Common.ShowAlertMessage("dvError", obj.SuccessMessage, null, null);
+
+            Common.RefreshTabs("LoanInputTabStrip");
+        }
+        return;
+
+    };
+
+    this.PostFOApprovalRequst = function (obj) {
+        if (obj.Processed != undefined && obj.Processed == "SaveError" || obj.Processed == "DataError") {
+            Common.ShowAlertMessage("dvError", obj.SuccessMessage, null, null, "Common.ReloadPage");
+        } else if (obj.Processed != undefined && obj.Processed == "DataValidationError") {
+            if (obj.UrlEnd && obj.UrlEnd != "")
+                Common.ReloadPage(Application.ContextPath + obj.UrlEnd);
+            else
+                Common.ReloadPage();
+        } else {
+            if (!Helper.IsNullOrEmpty(obj.SuccessMessage))
+                Common.ShowAlertMessage("dvError", obj.SuccessMessage, null, null, "Common.ReloadPage");
+        }
+        return;
+
+    };
+
+    this.CheckValidationForErrorPagePopup = function (popUpForm) {
+        if (popUpForm != null && popUpForm.length > 0 && typeof isErrorPage != 'undefined' && isErrorPage) {
+            Common.CheckValidation(null, null, popUpForm);
+        }
+    };
+
+    var TabLoadedCount = [];
+    this.OnTabContentLoad = function (tabId, onAllTabsLoadCompleted) {
+        if (TabLoadedCount[tabId] == null)
+            TabLoadedCount[tabId] = 1;
+        else
+            TabLoadedCount[tabId] += 1;
+
+        var tabStrip = Helper.GetTabStripControl(tabId);
+        if (tabStrip != null && (tabStrip.contentElements.length == TabLoadedCount[tabId] || TabLoadedCount[tabId] == 0)) {
+            kendo.ui.progress($("#appcontainer"), false);
+            if (typeof onAllTabsLoadCompleted != 'undefined' && !Helper.IsNullOrEmpty(onAllTabsLoadCompleted)) {
+                eval(onAllTabsLoadCompleted);
+                TabLoadedCount[tabId] = 0;
+            }
+            if (typeof ValidationErrors != 'undefined' && ValidationErrors != null) {
+                ValidationErrors = null;
+            }
+
+            //Make the Tab Active based on Querystring value 
+            var activeTab = Helper.GetQueryStringParameter("activetab");
+            if (typeof activeTab != 'undefined' && activeTab != null) {
+                var tabToActivate = $('#' + tabId+ ' .k-tabstrip-items.k-reset li[aria-controls="' + activeTab + '"]');
+                //var activeTabId = '';
+                if (tabToActivate.length > 0) {
+                    tabStrip.activateTab(tabToActivate);
+                }
+            }
+        }
+    }
+
+    this.ClearControlInput = function (control1, control2) {
+        $('#' + control1).val('');
+        if (control2)
+            $('#' + control2).val('');
+
+    };
+
+    this.ClearLookupControls = function (command) {
+        var referenceIds = '';
+        if (command != null && typeof command != 'undefined')
+            referenceIds = command.ReferenceIds;
+        if (referenceIds != '') {
+            var arrreferenceIds = referenceIds.split("@");
+            if (arrreferenceIds.length > 0) {
+                $.each(arrreferenceIds, function (index, value) {
+                    $('#' + value).val('');
+                });
+            }
+        }
+    };
+    this.SetupTextAreaLimits = function () {
+        var otherInfo = $("[Limits='true']");
+        if (!otherInfo)
+            return;
+
+        otherInfo.attr("wrap", "off");
+
+        otherInfo.bind('paste', function (e) {
+            e.preventDefault();
+        });
+
+        otherInfo.keypress(function (event) {
+            Common.ProcessLimitedTextAreaKeyPress(event, $(this));
+        });
+    }
+
+    this.ProcessLimitedTextAreaKeyPress = function (event, control) {
+        var txt = control.text();
+        //var carriageReturnPosition = txt.indexOf("\n");//carriage return position if any
+
+        var lines = txt.split("\n");
+
+        var maxRows = control.attr("MaxRows");
+        var maxChars = control.attr("MaxChars");
+
+        if (event.which == 13) {//attempt to enter carriage return
+            if (lines.length >= maxRows) //attempt to enter extra carriage return
+                event.preventDefault();
+
+            return;//either case we don't need to validate any more
+        }
+        //not carriage return
+
+        if (txt.replace("\n", "").length < maxChars) //it's still within one line limit and user is not trying to enter 2nd carriage return so it's ok
+            return;
+
+        var sel = Common.GetTextAreaInputSelection(control[0]);
+        if (sel.start != sel.end)//something is selected which will then be removed which won't increase the count
+            return;
+
+        var caretPos = sel.start;
+
+        var lastCharIndex = 0;
+        var curLine;
+        for (curLine = 0; curLine < lines.length; curLine++) {
+            lastCharIndex += lines[curLine].length;
+            if (caretPos <= lastCharIndex) {
+                break;//this is the line, if not then check that caret is before the end of the next line
+            }
+            if (curLine == lines.length - 1)
+                break;
+            lastCharIndex++;
+        }
+
+        if (lines[curLine].length >= maxChars) {//trying to enter the extra max+1 char
+            event.preventDefault();
+            return;
+        }
+        return;
+    }
+
+    this.GetTextAreaInputSelection = function (el) {
+        var start = 0, end = 0, normalizedValue, range,
+            textInputRange, len, endRange;
+
+        if (typeof el.selectionStart == "number" && typeof el.selectionEnd == "number") {
+            start = el.selectionStart;
+            end = el.selectionEnd;
+        } else {
+            range = document.selection.createRange();
+
+            if (range && range.parentElement() == el) {
+                len = el.value.length;
+                normalizedValue = el.value.replace(/\r\n/g, "\n");
+
+                textInputRange = el.createTextRange();
+                textInputRange.moveToBookmark(range.getBookmark());
+
+                endRange = el.createTextRange();
+                endRange.collapse(false);
+
+                if (textInputRange.compareEndPoints("StartToEnd", endRange) > -1) {
+                    start = end = len;
+                } else {
+                    start = -textInputRange.moveStart("character", -len);
+                    start += normalizedValue.slice(0, start).split("\n").length - 1;
+
+                    if (textInputRange.compareEndPoints("EndToEnd", endRange) > -1) {
+                        end = len;
+                    } else {
+                        end = -textInputRange.moveEnd("character", -len);
+                        end += normalizedValue.slice(0, end).split("\n").length - 1;
+                    }
+                }
+            }
+        }
+        return {
+            start: start,
+            end: end
+        };
+    }
+
+    this.ClearComasFromFormattedNumer = function (ctrl) {
+        var numCtrl = $(ctrl);
+        var curVal = numCtrl.val().trim();
+        if (curVal != null && $.type(curVal) === "string" && curVal.indexOf(",") != -1) { //SS: removing the format comma 
+            numCtrl.val(curVal.replace(/,/g, ''));
+        }
+    }
+
+    //SS 03/20/2015: This function is used to avoid user to input numbers out of range
+    this.CheckNumberRange = function (event, ctrl) {
+        var numCtrl = $(ctrl);
+        var curVal = numCtrl.val().trim();
+
+        //SS: Allowing the minus(-) only if negative range is mentioned and minus is first input
+        var minVal = numCtrl.attr('data-val-range-min');
+        if (curVal == '-' && minVal !== null && curVal.length == 1 && minVal && parseFloat(minVal) < 0) {
+            return;
+        }
+
+        if (curVal.indexOf('.') != -1) { //SS: Do not validate if decimal is entered first time
+            if ((curVal.split(".").length - 1) <= 1 && event.char == ".") {
+                numCtrl.attr('prevValue', curVal);
+                return;
+            }
+        }
+        if (parseFloat(curVal) == 0) { //SS: To validate 0, .0 as valid number
+            numCtrl.attr('prevValue', curVal);
+            return;
+        }
+
+        if (curVal != null && $.type(curVal) === "string" && curVal.indexOf(",") != -1) {  //SS: removing the format comma 
+            numCtrl.val(curVal.replace(/,/g, ''));
+        }
+
+        var frmValidator = $(ctrl.form).validate();//DO if control is not in form validator is N/A, skip the validation as it would throw JS exception
+        if ((frmValidator) && curVal != null && curVal != '' && !numCtrl.valid()) {
+            event.preventDefault();
+            numCtrl.val(numCtrl.attr('prevValue')); //SS: This will set the previous value and will avoid the range validation message from being displayed
+            return;
+        }
+        numCtrl.attr('prevValue', curVal);
+        return;
+    };
+
+    //DO 8/10/2015 - Moved from LiborRateEntry.js to accomodate formatting of COF dashboard
+    this.SetTempateTextBoxRateFormat = function (textCtrl) {
+        textCtrl = $(textCtrl);
+        if (textCtrl != null && textCtrl.length > 0) {
+            var format = textCtrl.attr('data-format');
+            if (!Helper.IsNullOrEmpty(format)) {
+                textCtrl.val(Helper.FormatNumber(textCtrl.val(), format));
+            }
+        }
+    }
+
+    this.CheckFileExtension = function (fileName) {
+        var allowedExtensions = new Array('doc', 'txt', 'docx', 'xls', 'xlsx', 'csv', 'pdf');
+        var list = fileName.split('.');
+        if (list.length <= 0) {
+            Common.ShowAlertMessage(null, "Error occured. Please check the file.", 'Document upload error.', false, null, null, null, null);
+            return false;
+        }
+        var extension = list[list.length - 1];
+        return allowedExtensions.indexOf(extension.toLowerCase()) >= 0;
+    };
+
+    this.UpdateEventType = function (eventTypeDrpDownId, statusCodeId, eventTypeCodeDescId) {
+
+        //var eventDropdown = $("#CashflowEventTypeCode").data('kendoDropDownList');
+        var eventDropdown = $("#" + eventTypeDrpDownId).data('kendoDropDownList');
+        var eventTypeCodeDescCtrl = $("#" + eventTypeCodeDescId);
+        if (eventDropdown != null && eventDropdown.value() != "" && eventTypeCodeDescCtrl.length > 0)
+            //$("#EventType").val(eventDropdown.text());
+            eventTypeCodeDescCtrl.val(eventDropdown.text());
+
+
+        if ($("#IsSelected").lenghth > 0) {
+            $("#IsSelected").val("");
+        }
+
+        //var eventStatus = $('#EventStatusCode').val();
+        var statusCtrl = $('#' + statusCodeId);
+        if (statusCtrl.length > 0) {
+            var statusVal = statusCtrl.val();
+            if (statusVal == 'A' || statusVal == 'U')
+                return true;
+            if (statusVal == 'O' || statusVal == 'D')
+                statusCtrl.val('U');
+            else
+                statusCtrl.val('A');
+        }
+
+
+        return true;
+    }
+
+    this.DeleteCashFlow = function (dataItem, commandParameters) {
+        if (dataItem.IsOVS) {
+            dataItem.EventStatusCode = "D";
+            //update grid record 
+            GridHelper.UpdateDataSourceRow(commandParameters.GridId, commandParameters.SelectedRowIndex, dataItem);
+        } else {
+            // regular delete
+            GridHelper.DeleteDataSourceRow(commandParameters.GridId, commandParameters.SelectedRowIndex);
+        }
+    };
+
+    this.AttachWindowResizeEvent = function () {
+        window.addEventListener("resize", this.SetPagerWidth);
+    };
+    this.SetPagerWidth = function () {
+        var pager = $('div.k-grid-pager');
+        var grid = $("table[role=treegrid]");
+        if (pager.length > 0 && grid.length > 0) {
+            pager.width(grid.width() - 5);
+        }
+        //$('div.k-grid-pager').width($("table[role=treegrid]").width());
+    };
+
+    //JR 20151209
+    //removes the tooltip from the display
+    //this is used in the scenario where we click on tooltip does not go away
+    //normally on hover the tip is removed
+    this.RemoveToolTip = function () {
+
+        var tooltip = $("div[id^='ui-tooltip-']:last");
+        if (tooltip.length > 0) {
+            tooltip.remove();
+        }
+    };
+
+    this.DeleteDocument = function (obj, cmd) {
+
+        var workflowID = $("input[id$='WorkflowTransactionId']").length > 0 ? $("input[id$='WorkflowTransactionId']")[0].value : 0;
+        var taskID = $("input[id$='TaskId']").length > 0 ? $("input[id$='TaskId']")[0].value : 0;
+        var documentId = obj.DocumentId;
+        var userId = obj.CreatedBy;
+        $.invokeAjax({
+            type: 'POST',
+            url: Application.ContextPath + "EcmDocument/DeleteDocument?workflowTransactionId=" + workflowID + "&workflowTaskId=" + taskID + "&documentId=" + documentId + "&userId=" + userId,
+            contentType: 'application/json; charset=utf-8',
+            success: function (result, status, jqXhr) {
+                if (result.isDeleteAllowed === true) {
+                    var index = GridHelper.GetGridDataRowIndex('DocumentList', obj);
+                    GridHelper.DeleteDataSourceRow('DocumentList', index);
+                } else {
+                    //show message
+                    Common.ShowAlertMessage('dvDialog', CommonMessages.DeleteDocument_Error_Message, '', null, null);
+                }
+            }
+        });
+    }
+
+    // If the transaction has any workflow comments, set the notification.
+    this.SetCommentNotification = function (workflowID) {
+        if (workflowID == undefined) {
+            workflowID = $("input[id$='WorkflowTransactionId']").length > 0 ? $("input[id$='WorkflowTransactionId']")[0].value : 0;
+        }
+        var taskID = $("input[id$='TaskId']").length > 0 ? $("input[id$='TaskId']")[0].value : 0; 
+        $.invokeAjax({
+            contentType: 'application/json; charset=utf-8',
+            type: 'POST',
+            url: Application.ContextPath + "WorkflowComment/CheckIfCommentsExist?workflowTransactionId=" + workflowID + "&workflowtaskid=" + taskID,
+            contentType: 'application/json; charset=utf-8',
+            success: function (response) {
+                if (response.commentsExist) {
+                    if ($("a[id$='btnAddWorkflowComment'].iicon-comment").length > 0) {
+                        $("a[id$='btnAddWorkflowComment'].iicon-comment").addClass("iicon-red-commentNotification").removeClass("iicon-comment");
+                    }
+                    else {
+                        $("a[id$='btnAddWorkflowComment']").find("span.iicon-comment").addClass("iicon-red-commentNotification").removeClass("iicon-comment");
+                    }
+                }
+            }
+        });
+    }
+
+    //this.validateFile = function () {
+    //    if ($('#uploadMessage') != null && !(!$('#uploadMessage'))) {
+    //        $("#uploadMessage").hide();
+    //    }
+    //    if (!this.CheckFileExtension($("#File").val())) {
+    //        this.ShowAlertMessage(null, "Files with extensions .doc, .docx, .xls, .xlsx, .csv, .txt and .pdf are only allowed. Please check your file and upload again.", 'Document upload error', false, null, null, null, null);
+    //        return false;
+    //    }
+    //    if ($("#File").val())
+    //        $(this).prop('disabled', true);
+
+    //    kendo.ui.progress($("#appcontainer"), true);
+    //    return false;
+    //};
+    this.validateEmail = function (email) {
+        var filter = /^([\w-\.]+)@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.)|(([\w-]+\.)+))([a-zA-Z]{2,4}|[0-9]{1,3})(\]?)$/;
+        if (filter.test(email)) {
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+}
+
+$(window).load(function () {
+    // Check if the page has workflow comments.
+    if ($("a[id$='btnAddWorkflowComment']").length > 0) {
+        Common.SetCommentNotification();
+    }
+});
+
+var Common = new LoansApp.Common();
+
+/* 1/3/2014 created by Soumya*/
+/* Start MessageBox, ConfirmationBox and Client Side Popupwindow Common Control */
+WindowDefination = function () {
+    var title = "";
+    var width = "600";
+    var top = '';
+    var left = '';
+    var callBackFunction = '';
+    var message = '';
+    var isConfirmation = false;
+    var isDestroyOnClose = true;
+
+    var showDialog = function (windowId) {
+        //if (windowDefinition == null) {
+        //    return;
+        //}
+        //var onClose = function () {
+        //    if (jQuery.isFunction(windowDefinition.callBackFunction)) {
+        //        windowDefinition.callBackFunction();
+        //    }
+        //};
+
+        if ($('#' + windowId).length <= 0) {
+            var promptContent = '<div id="' + windowId + '"></div>';
+            var confirmHtml = '<div class="row-fluid"><div class="span12 text-center"><input type="button" class="btn btn-large btn-primary windowClose" value="Yes" onclick="{0};"/><input type="button" class="btn btn-large btn-primary margin-left-10 windowClose" value="No"/></div></div>';
+            var alertHtml = '<div class="row-fluid"><div class="span12 text-center"><input type="button" class="btn btn-large btn-primary windowClose" value="Ok" onclick="{0};"/></div></div>';
+
+            if (!Helper.IsNullOrEmpty(this.callBackFunction) && this.callBackFunction.lastIndexOf(')') == -1) {
+                this.callBackFunction += "()";
+            }
+            confirmHtml = Helper.FormatString(confirmHtml, Helper.IsNullOrEmpty(this.callBackFunction) ? "" : this.callBackFunction);
+            alertHtml = Helper.FormatString(alertHtml, Helper.IsNullOrEmpty(this.callBackFunction) ? "" : this.callBackFunction);
+
+            if (!Helper.IsNullOrEmpty(this.message)) {
+                promptContent = '<div id="' + windowId + '">' + this.message + ((this.isConfirmation) ? confirmHtml : alertHtml) + '</div>';
+            }
+            $("#Extwindows").html(promptContent);
+        }
+
+        $('#' + windowId).kendoWindow({
+            title: this.title,
+            width: this.width,
+            visible: false,
+            actions: ["Close"],
+            modal: true,
+            draggable: false,
+            resizable: false,
+            position: {
+                top: this.top,
+                left: this.left
+            }
+            //close: onClose
+        });
+        var modalWindow = $('#' + windowId).data("kendoWindow");
+        modalWindow.center();
+
+        //$('body').on('click', triggerID, function () {
+        //    modalWindow.open();
+        //});
+        //if (openOnLoad == true) {
+        //    modalWindow.open();
+        //}
+        modalWindow.open();
+
+        if (this.isDestroyOnClose) {
+            $('#' + windowId).on('click', '.windowClose', function () {
+                modalWindow.destroy();
+            });
+        }
+        else {
+            $('#' + windowId).on('click', '.windowClose', function () {
+                modalWindow.close();
+            });
+        }
+    };
+
+
+    return {
+        title: title
+        , width: width
+        , top: top
+        , left: left
+        , callBackFunction: callBackFunction
+        , message: message
+        , isConfirmation: isConfirmation
+        , showDialog: showDialog
+        , isDestroyOnClose: isDestroyOnClose
+    };
+
+}
+
