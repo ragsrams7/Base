@@ -1,0 +1,353 @@
+
+SBR.Helper = function () {
+
+    this.FormatString = function () {
+        var s = arguments[0];
+
+        var i = 0;
+        while (++i < arguments.length) {
+            s = s.replace(new RegExp('\\{' + (i - 1) + '\\}', 'gm'), arguments[i]);
+        }
+        return s;
+    };
+
+    this.IsJson = function (data) {
+        try {
+            $.parseJSON(data);
+        } catch (e) {
+            return false;
+        }
+        return true;
+    }
+
+    this.ResizePage = function () { //Uppercase conversion
+        if (typeof AttachWindowResizeEvent == 'function') {
+            AttachWindowResizeEvent();
+        }
+    }
+
+    this.DateDiffInDays = function (a, b) { //Uppercase conversion
+        if (a && b) {
+            var date1 = new Date(a);
+            var date2 = new Date(b);
+            var msPerDay = 1000 * 60 * 60 * 24;
+
+
+            var utc1 = Date.UTC(date1.getFullYear(), date1.getMonth(), date1.getDate());
+            var utc2 = Date.UTC(date2.getFullYear(), date2.getMonth(), date2.getDate());
+
+            return Math.floor((utc2 - utc1) / msPerDay);
+        }
+    }
+
+    this.JsonDateTimeToDate = function (dateTime) { //Uppercase conversion
+        dateTime = dateTime.replace(/[^0-9 +]/g, '');
+        return new Date(parseInt(dateTime));
+    }
+
+    this.GetDSTDifference = function (date) {
+        var jan = new Date(2015, 0, 1);
+        return (date.getTimezoneOffset() - jan.getTimezoneOffset()); // to consider the day light saving. EST DST - non-DST (240 - 300) => -60
+    }
+
+    this.FormatJsonDate = function (dateString, dateFormat, isTimeOnly) { //Uppercase conversion
+        var formatedDate = "";
+        var date;
+        var format = dateFormat ? dateFormat : "d";
+        var adjustDate = false;
+        try {
+
+            if (dateString) {
+                if ($.type(dateString) != 'date') {
+                    if (dateString.indexOf("Date") > -1) {
+                        date = new Date(parseInt(dateString.substr(6)));
+                    }
+                    else {
+                        dateString = dateString.replace(/-/g, '/').replace('T', ' ').replace('Z','').split('.')[0];
+                        date = new Date(dateString);
+                        adjustDate = true;
+                    }
+                }
+                else {
+                    date = new Date(dateString);
+                }
+
+                var dstDiff = this.GetDSTDifference(date);
+                var estOffset = ((300 + dstDiff) * 60000);
+                var userTZOffset = date.getTimezoneOffset() * 60000;
+                if (adjustDate) {
+                    date = new Date(date.getTime() - userTZOffset + estOffset);
+                }
+
+                if (isTimeOnly) {
+                    formatedDate = kendo.format("{0: HH:mm tt}", date);
+                } else {
+                    if(format != "d")
+                        formatedDate = kendo.format("{0:" + format + "}", date);
+                    else {
+                        date = new Date(date.getTime() + userTZOffset - estOffset); // to adjust to EST which is server's timezone
+                        formatedDate = kendo.format("{0:" + format + "}", date);
+                    }
+                }
+            }
+        }
+        catch (ex) {
+            return dateString;
+        }
+        return formatedDate;
+    }
+
+  //SS 11/19/2014: Formating Decimals
+    this.FormatNumber = function (data, format) {
+        //var format = Format ? Format : "#,###.##";
+        format = format ? format : "n3"; //SS: 11/18/2014 default numeric format
+        var formatteddata = "";
+        try {
+            if (data != null && $.type(data) === "string" && data.indexOf(",") != -1) {  //SS: removing the format comma 
+                data = data.replace(/,/g, '');
+            }
+            if ($.isNumeric(data)) {
+                //formatteddata = kendo.format(format, parseInt(data));
+                formatteddata = kendo.toString(parseFloat(data), format);
+            }
+            //formatteddata = kendo.format("{0:" + format + "}", data);
+        }
+        catch (ex) {
+            return formatteddata;
+        }
+        return formatteddata;
+    }
+
+    //SS 11/19/2014: Formating Bool
+    this.FormatBool = function (data) {
+        if (data == true) {
+            return "Yes";
+        } else {
+            return "No";
+        }
+    }
+
+
+    // ASP.NET MVC check boxes contain a hidden input field that is used to store  
+    // a true false value for 'checked'.  The two methods below ensure that the 
+    // hidden input field is updated when the check boxes are clicked and/or loaded
+    this.ChangeCheckBoxHiddenValue = function (controlId) {
+        var controlName = controlId;
+        if (controlId.indexOf("_") != -1) {
+            controlName = controlId.replace(/_/g, ".");
+        }
+
+        var checkBox = $('[id=' + controlId + ']');
+        checkBox.val(checkBox.is(':checked'));
+        var hiddenField = $('[name="' + controlName + '"]:hidden');
+        if (hiddenField != null && hiddenField.length > 0) {
+            hiddenField.val(checkBox.is(':checked'));
+        }
+    }
+
+    this.LoadCheckBoxHiddenValue = function (controlId) {
+        var controlName = controlId;
+        if (controlId.indexOf("_") != -1) {
+            controlName = controlId.replace(/_/g, ".");
+        }
+        
+        //var hiddenField = $('[name=' + controlId + ']:hidden');
+        //if (hiddenField != null && $('[id="' + controlName + '"]:checked') == true) {
+        var hiddenField = $('[name="' + controlName + '"][type="hidden"]');
+        //SS: 10/10/2014 fix for the hidden field was getting render as true bydefault in FacilityType selection
+        if (hiddenField != null && hiddenField.length > 0 && $('[id="' + controlId + '"]:checkbox').prop('checked') == true) {
+            hiddenField.val('true');
+            $('[id=' + controlId + ']').val('true');
+        } else {
+            $('[id=' + controlId + ']').val('false');
+        }
+    }
+    
+    /* End Common helper funtions */
+
+    this.GetExtCommandObjParameter = function (obj, parameterName) { //Uppercase conversion
+        var parameterValue = "";
+        $.each(obj.ActionKeys, function (key, value) {
+            if (value.ParameterName == parameterName) {
+                parameterValue = value.PropertyName;
+            }
+        });
+        return parameterValue;
+    };
+
+    this.GetObjParameter = function (obj, parameterName) {
+        var parameterValue = "";
+        $.each(obj, function (key, value) {
+            if (value.CommandParameterType == parameterName) {
+                parameterValue = value.CommandParameterValue;
+            }
+        });
+        return parameterValue;
+    };
+
+    this.GenerateURL = function (url, displayText) {
+        if (window.location.href.search(Application.ReportServer) != -1) {
+            url = Application.BaseURL + url;
+        } else {
+            url = Application.ContextPath + url;
+        }
+        var returnText = '<a href ="' + url + '" > <span>' + displayText + '</span></a>';
+        return returnText;
+    }
+
+    this.IsNullOrEmpty = function (val) { //Uppercase conversion
+        if (val !== undefined && val !== null && $.trim(val) != '') {
+            return false;
+        } else {
+            return true;
+        }
+    };
+
+    this.AppendActionKey = function (actionUrl, actionKey) { //Uppercase conversion
+        if (!!actionUrl) {
+            if (actionKey != '') {
+                if (actionUrl.indexOf('?') < 0) {
+                    actionUrl += '/?' + actionKey;
+                } else {
+                    actionUrl += '&' + actionKey;
+                }
+            }
+        }
+        return actionUrl;
+    }
+
+    this.GetQueryStringParameter = function (name, formAction) { //Uppercase conversion
+        var results = null;
+        if ('undefined' === typeof formAction) {
+            results = new RegExp('[?&]' + name + '=([^&#]*)','i').exec(window.location.href);
+        } else {
+            results = new RegExp('[?&]' + name + '=([^&#]*)','i').exec(formAction);
+        }
+        if (!results) {
+            return null;
+        }
+        return results[1];
+    }
+
+    this.AddCascadingQueryStringParameter = function (name) { //Uppercase conversion
+        Application.CascadingQueryStringParameters.push(name);
+    }
+
+    //SS 11/19/2014: Setting the tru value for the Radio buttons
+    this.SetRadioButonsTrueValue = function () {
+        if ($('form').find('input[type=radio][data-val=true][value!=false][value!=False]').length > 0) {
+            $('form').find('input[type=radio][data-val=true][value!=false][value!=False]').attr('value', 'true');
+        }
+    };
+
+    this.AppendCascadingQueryStringParameters = function (url) { //Uppercase conversion
+        if (url != null && url != '') {
+            cascadingParams = '';
+            $.each(Application.CascadingQueryStringParameters, function (index, value) {
+                var paramValue = Helper.GetQueryStringParameter(value);
+                if (paramValue != null && url.indexOf(value) < 0) {
+                    if (cascadingParams != '')
+                        cascadingParams += '&';
+                    cascadingParams += value + '=' + paramValue;
+                }
+            });
+
+            return Helper.AppendActionKey(url, cascadingParams);
+        }
+
+        return url;
+    }
+
+
+    var ControlTypeEnum = {
+        DatePicker: "kendoDatePicker"
+       , NumericTextBox: "kendoNumericTextBox"
+       , DropDownList: "kendoDropDownList"
+       , TabStrip: "kendoTabStrip"
+       , Window: "kendoWindow"
+       , Grid: "kendoGrid"
+       , MultiSelect: "kendoMultiSelect"  
+    };
+
+    this.GetNumericControl = function (controlId) {
+        return this.GetControl(controlId, ControlTypeEnum.NumericTextBox);
+    }
+
+    this.GetDatePickerControl = function (controlId) {
+        return this.GetControl(controlId, ControlTypeEnum.DatePicker);
+    }
+
+    this.GetDropDownListControl = function (controlId) {
+        return this.GetControl(controlId, ControlTypeEnum.DropDownList);
+    }
+
+    this.GetTabStripControl = function (controlId) {
+        return this.GetControl(controlId, ControlTypeEnum.TabStrip);
+    }
+
+    this.GetWindowControl = function (controlId) {
+        return this.GetControl(controlId, ControlTypeEnum.Window);
+    }
+
+    this.GetGridControl = function (controlId) {
+        return this.GetControl(controlId, ControlTypeEnum.Grid);
+    }
+
+    this.GetMultiSelectControl = function(controlId) {
+        return this.GetControl(controlId, ControlTypeEnum.MultiSelect);
+    }
+
+    this.GetNumericValue = function (controlId) {
+        var ctr = this.GetControl(controlId, ControlTypeEnum.NumericTextBox);
+        return (ctr != null) ? ctr.value() : null;
+    }
+
+    this.GetDatePickerValue = function (controlId) {
+        var ctr = this.GetControl(controlId, ControlTypeEnum.DatePicker);
+        return (ctr != null) ? ctr.value() : null;
+    }
+
+    this.GetDropDownListValue = function (controlId) {
+        var ctr = this.GetControl(controlId, ControlTypeEnum.DropDownList);
+        return (ctr != null) ? ctr.value() : null;
+    }
+
+    
+    this.GetControlValue = function (controlId, controlType) {
+        var ctr = this.GetControl(controlId, controlType);
+        return (ctr != null) ? ctr.value() : null;
+    }
+    this.InitElementAttr=function(elementId,attrName,attrVal) {
+ 
+        if ($(elementId).length) {
+            $(elementId).attr(attrName, attrVal);
+        }  
+   
+    }
+    this.GetControl = function (controlId, controlType) {
+        if ($(controlId).length == 0 && $('#' + controlId).length == 0) {
+            return null;
+        }
+
+        switch (controlType) {
+            case ControlTypeEnum.DatePicker:
+                return ($(controlId).length == 0) ? $('#' + controlId).data("kendoDatePicker") : $(controlId).data("kendoDatePicker");
+            case ControlTypeEnum.NumericTextBox:
+                return ($(controlId).length == 0) ? $('#' + controlId).data("kendoNumericTextBox") : $(controlId).data("kendoNumericTextBox");
+            case ControlTypeEnum.DropDownList:
+                return ($(controlId).length == 0) ? $('#' + controlId).data("kendoDropDownList") : $(controlId).data("kendoDropDownList");
+            case ControlTypeEnum.TabStrip:
+                return ($(controlId).length == 0) ? $('#' + controlId).data("kendoTabStrip") : $(controlId).data("kendoTabStrip");
+            case ControlTypeEnum.Window:
+                return ($(controlId).length == 0) ? $('#' + controlId).data("kendoWindow") : $(controlId).data("kendoWindow");
+            case ControlTypeEnum.Grid:
+                return ($(controlId).length == 0) ? $('#' + controlId).data("kendoGrid") : $(controlId).data("kendoGrid");
+            case ControlTypeEnum.MultiSelect:
+                return ($(controlId).length == 0) ? $('#' + controlId).data("kendoMultiSelect") : $(controlId).data("kendoMultiSelect");
+            default:
+                return null;
+        }
+    }
+}
+
+var Helper = new SBR.Helper();
