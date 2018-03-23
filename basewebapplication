@@ -1,0 +1,32 @@
+ public abstract class BaseWebApplication : HttpApplication
+    {
+        public event EventHandler<ApplicationEventArgs> SessionEndHandler;
+        public static event EventHandler<ApplicationEventArgs> RequestEndHandler;
+       
+        public class ApplicationEventArgs : EventArgs
+        {
+            public BaseWebApplication Application { get; set; }
+        }
+
+        protected void Application_EndRequest(object sender, EventArgs args)
+        {
+            EventHandler<ApplicationEventArgs> handler = RequestEndHandler;
+            if (handler != null)
+            {
+                handler(this, new ApplicationEventArgs() { Application = this });
+            }
+        }
+
+        /// <summary>
+        /// Only in the InProc Session manager, this event is fired.
+        /// </summary>
+        protected virtual void Session_End()
+        {
+            EventHandler<ApplicationEventArgs> handler = this.SessionEndHandler;
+            if (handler != null) handler(this, new ApplicationEventArgs() { Application = this });
+        } 
+        protected void Application_Error(object sender, EventArgs e)
+        {
+            ServiceLocator.Current.GetInstance<ILoggingService>().Log(Server.GetLastError(), category: Category.General);
+        }
+    }
