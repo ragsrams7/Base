@@ -1,0 +1,128 @@
+ public class PerSessionObjectLifetimeManager : LifetimeManager, IDisposable
+    {
+        private readonly Guid Key = Guid.NewGuid();
+        protected ILoggingService LoggingSvc { get { return ServiceLocator.Current.GetInstance<ILoggingService>(); } }
+
+        /// <summary>
+        /// Initializes a new instance of ObjectLifetimeManager with a corresponding store.
+        /// </summary>
+        public PerSessionObjectLifetimeManager()
+        {
+            // hook up the session end event to clean up the objects.
+            var appObj = (HttpContext.Current.ApplicationInstance as BaseWebApplication);
+            if (appObj != null)
+            {
+                appObj.SessionEndHandler += DisposeObject;
+            }
+        }
+
+        public override object GetValue()
+        {
+            if (HttpContext.Current != null)
+                return  GetValue(HttpContext.Current.Session);
+
+            return null;
+        }
+
+        public object GetValue(HttpSessionState session)
+        {
+            if (session != null)
+                return session[Key.ToString()];
+                
+            return null;
+        }
+
+        public object GetValue(ICachingService session)
+        {
+            if (session != null)
+                return session.Get<object>(string.Format(@"{0}-{1}", HttpContext.Current.User.Identity.Name, Key.ToString()), true);
+
+            return null;
+        }
+
+        public override void SetValue(object newValue)
+        {
+            if (HttpContext.Current != null )
+                SetValue(HttpContext.Current.Session, newValue);
+        }
+
+        public void SetValue(HttpSessionState session, object newValue)
+        {
+            if (session != null)
+            {
+                session.Add(Key.ToString(), newValue);
+                LoggingSvc.Log(string.Format(@"A new {0} object is created and being maintained by DI per session lifetime manager.", newValue.GetType().Name), category: Category.General, severity: System.Diagnostics.TraceEventType.Verbose);
+            }
+        }
+        public void SetValue(ICachingService session, object newValue)
+        {
+            if (session != null)
+            {
+                session.Put(string.Format(@"{0}-{1}", HttpContext.Current.User.Identity.Name, Key.ToString()), newValue, TimeSpan.MaxValue);
+                LoggingSvc.Log(string.Format(@"A new {0} object is created and being maintained by DI per session lifetime manager.", newValue.GetType().Name), category: Category.General, severity: System.Diagnostics.TraceEventType.Verbose);
+            }
+        }
+
+        public override void RemoveValue()
+        {
+            RemoveValue(HttpContext.Current.Session);
+        }
+
+        public void RemoveValue(HttpSessionState session)
+        {
+            if (session != null)
+            {
+                var objToRemove = GetValue(session);
+                if (objToRemove != null)
+                {
+                    session.Remove(Key.ToString());
+
+                    LoggingSvc.Log(string.Format(@"A {0} object is removed and being disposed by DI per session lifetime manager.", objToRemove.GetType().Name), category: Category.General, severity: System.Diagnostics.TraceEventType.Verbose);
+
+                    // if Object being removed is disposable, then here we are disposing as a good citizen.
+                    var disposable = objToRemove as IDisposable;
+                    if (disposable != null)
+                    {
+                        disposable.Dispose();
+                    }
+                }
+            }
+        }
+        public void RemoveValue(ICachingService session)
+        {
+            if (session != null)
+            {
+                var objToRemove = GetValue(session);
+                if (objToRemove != null)
+                {
+                    session.Remove(string.Format(@"{0}-{1}", HttpContext.Current.User.Identity.Name, Key.ToString()));
+
+                    LoggingSvc.Log(string.Format(@"A {0} object is removed and being disposed by DI per session lifetime manager.", objToRemove.GetType().Name), category: Category.General, severity: System.Diagnostics.TraceEventType.Verbose);
+
+                    // if Object being removed is disposable, then here we are disposing as a good citizen.
+                    var disposable = objToRemove as IDisposable;
+                    if (disposable != null)
+                    {
+                        disposable.Dispose();
+                    }
+                }
+            }
+        }
+
+
+        protected virtual void Dispose(bool disposing)
+        {
+            this.RemoveValue();
+        }
+
+        public void Dispose()
+        {
+            this.Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        private void DisposeObject(object sender, BaseWebApplication.ApplicationEventArgs args)
+        {
+            this.RemoveValue(args.Application.Session);
+        }
+    }
